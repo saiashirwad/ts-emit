@@ -14,6 +14,7 @@ export interface Emitter {
   readonly at: (node: AnyNode, min: number) => string
   readonly block: (block: Block) => string[]
   readonly name: (binding: Binding) => string
+  readonly scopes: ReadonlyArray<ReadonlyArray<AnyNode>>
 }
 
 export type Handler<N = any> = (node: N, emit: Emitter) => Fragment | string
@@ -56,6 +57,7 @@ export const emit = <L, Kinds extends string, const H extends Handlers>(
   target: Target<H> & Check<[Missing<Kinds, H>] extends [never] ? true : false, `target has no handler for "${Missing<Kinds, H>}"`>,
 ): string => {
   const names = bindingNames(program.root, target.naming)
+  const scopes: AnyNode[][] = []
   const emitter: Emitter = {
     node: (node) => {
       const handler = target.handlers[node.kind]
@@ -64,12 +66,25 @@ export const emit = <L, Kinds extends string, const H extends Handlers>(
       return typeof result === "string" ? frag(Infinity, result) : result
     },
     at: (node, min) => at(emitter.node(node), min),
-    block: (block) => block.statements.map((statement) => emitter.node(statement).text).filter((line) => line !== ""),
+    block: (block) => {
+      const before: AnyNode[] = []
+      scopes.push(before)
+      try {
+        return block.statements.flatMap((statement) => {
+          const line = emitter.node(statement).text
+          before.push(statement)
+          return line === "" ? [] : [line]
+        })
+      } finally {
+        scopes.pop()
+      }
+    },
     name: (binding) => {
       const name = names.get(binding.id)
       if (name === undefined) throw new Error(`binding "${binding.nameHint}" is not declared in the program`)
       return name
     },
+    scopes,
   }
   return emitter.block(program.root).join("\n")
 }
