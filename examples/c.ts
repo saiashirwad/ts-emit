@@ -64,6 +64,9 @@ export const program = c.program(function*() {
     })
     const capped = yield* c.let("capped", c.cast(c.i32, c.call(min, largest, c.literal(c.i64, 100n))), c.i32)
     yield* c.assign(lastGrade, c.call(grade, capped))
+    yield* c.unwrap(lastCounter, "counter", function*(counter) {
+      yield* c.assign(c.deref(counter), i32(0))
+    })
     const type = c.array(c.i32, 2)
     const values = yield* c.let("values", c.literal(type, [7, 3]), type)
     const outOfOrder = yield* c.let("outOfOrder", c.less(c.index(values, i32(1)), c.index(values, i32(0))), c.bool)

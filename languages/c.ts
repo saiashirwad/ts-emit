@@ -1,17 +1,22 @@
 import {
   addConstruct,
   type AnyNode,
+  type Binding,
+  binding,
+  type Block,
   braces,
   builder,
   type Check,
   children,
   defineTarget,
+  drain,
   emit,
   type Equal,
   type Expr,
   expr,
   exprClass,
   type Facts,
+  type FactsOf,
   frag,
   type Fragment,
   functionConstruct,
@@ -21,8 +26,12 @@ import {
   lessConstruct,
   type Lvalue,
   type Program,
+  type Ref,
+  ref,
   type RuntimeType,
   type Stmt,
+  stmt,
+  stmtClass,
   structured,
   typeClass,
   type TypeLambda,
@@ -129,6 +138,13 @@ export interface CastNode {
   readonly operand: Expr<C, unknown>
   readonly type: TypeNode<C, unknown>
 }
+export interface UnwrapNode {
+  readonly kind: "unwrap"
+  readonly value: Ref<C, unknown>
+  readonly binding: Binding
+  readonly type: TypeNode<C, unknown>
+  readonly body: Block
+}
 export interface TernaryNode {
   readonly kind: "ternary"
   readonly condition: Expr<C, boolean>
@@ -148,6 +164,7 @@ const literalClass = exprClass<LiteralNode>({ children: (node) => Array.isArray(
 const unaryClass = exprClass<UnaryNode>({ children: (node) => [node.operand] })
 const indexClass = exprClass<IndexNode>({ children: (node) => [node.array, node.at] })
 const castClass = exprClass<CastNode>({ children: (node) => [node.operand] })
+const unwrapClass = stmtClass<UnwrapNode>({ children: (node) => [node.value, node.type, node.body] })
 const ternaryClass = exprClass<TernaryNode>({ children: (node) => [node.condition, node.then, node.otherwise] })
 
 type IntFacts = { readonly kind: "int-type" }
@@ -312,6 +329,18 @@ export const c = {
       { readonly kind: "deref" } | F
     >
   },
+  unwrap: <D, Y extends Stmt<C, any, any>>(
+    value: Ref<C, D> & ([D] extends [Ptr<unknown> | null] ? (null extends D ? unknown : never) : never),
+    nameHint: string,
+    body: (pointer: Ref<C, NonNullable<D>>) => Generator<Y, void, unknown>,
+  ): Stmt<C, { readonly kind: "unwrap" | "ref" } | FactsOf<Y>> => {
+    if (value.kind !== "ref") throw new Error("unwrap needs a binding")
+    if (value.type.kind !== "nullable-type") throw new Error("unwrap needs a nullable pointer")
+    const declared = binding(nameHint)
+    const type = fieldsOf<NullableTypeNode>(value.type).to
+    const block = drain(() => body(ref(declared, type)), [declared]).block
+    return stmt(unwrapClass, { kind: "unwrap", value, binding: declared, type, body: block })
+  },
 
   program: <Y extends Stmt<C, any, any>>(body: () => Generator<Y, void, unknown>): Program<C, KindsOf<Y>> => {
     const program = builder<C>()(body)
@@ -469,6 +498,11 @@ export const cTarget = defineTarget(
     if: (node: IfNode, emit) => {
       const then = `if (${emit.node(node.condition).text}) ${braces(emit.block(node.then))}`
       return node.else === undefined ? then : `${then} else ${braces(emit.block(node.else))}`
+    },
+    unwrap: (node: UnwrapNode, emit) => {
+      const name = emit.name(node.binding)
+      const value = emit.node(node.value).text
+      return `if (${value} != NULL) ${braces([`${declaration(node.type, name, emit)} = ${value};`, ...emit.block(node.body)])}`
     },
     while: (node: WhileNode, emit) => `while (${emit.node(node.condition).text}) ${braces(emit.block(node.body))}`,
     return: (node: ReturnNode, emit) => `return ${emit.node(node.value).text};`,

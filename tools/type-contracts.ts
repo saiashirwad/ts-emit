@@ -92,6 +92,16 @@ const cases = [
     invalid: "c.let(\"m\", c.null(c.nullable(c.ptr(c.i32))), c.ptr(c.i32))",
   },
   { name: "nullable dereference", valid: "c.deref(p)", invalid: "c.deref(c.null(c.nullable(c.ptr(c.i32))))" },
+  {
+    name: "unwrap a nullable pointer",
+    valid: "declare const m: Ref<C, Ptr<I32> | null>; c.unwrap(m, \"q\", function*() {})",
+    invalid: "declare const m: Ref<C, Ptr<I32>>; c.unwrap(m, \"q\", function*() {})",
+  },
+  {
+    name: "unwrap a binding",
+    valid: "declare const m: Ref<C, Ptr<I32> | null>; c.unwrap(m, \"q\", function*() {})",
+    invalid: "declare const m: Expr<C, Ptr<I32> | null>; c.unwrap(m, \"q\", function*() {})",
+  },
   { name: "void pointer dereference", valid: "c.deref(p)", invalid: "declare const v: Expr<C, Ptr<Void>>; c.deref(v)" },
   { name: "address of an lvalue", valid: "c.address(c.deref(p))", invalid: "c.address(c.literal(c.i32, 1))" },
   { name: "assignment through a pointer", valid: "c.assign(c.deref(p), n)", invalid: "c.assign(p, n)" },

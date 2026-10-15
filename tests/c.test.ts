@@ -493,6 +493,46 @@ test("C nullable pointers hold null, accept pointers, and cannot be dereferenced
   }
 })
 
+test("C unwrap runs its body only for a non-null binding, with a scoped non-null pointer", () => {
+  const nullable = c.nullable(c.ptr(c.i32))
+  const program = c.program(function*() {
+    const value = yield* c.let("value", i32(40), c.i32)
+    yield* c.fn("main", [], c.i32, function*() {
+      const empty = yield* c.let("empty", c.null(nullable), nullable)
+      const pointer = yield* c.let("pointer", c.address(value), nullable)
+      yield* c.unwrap(empty, "found", function*(found) {
+        yield* c.assign(c.deref(found), i32(0))
+      })
+      yield* c.unwrap(pointer, "pointer", function*(found) {
+        assertType<Equal<lang.Denotes<typeof found>, Ptr<I32>>>()
+        yield* c.assign(c.deref(found), c.add(c.deref(found), i32(2)))
+      })
+      // @ts-expect-error only a nullable pointer can be unwrapped
+      assert.throws(() => c.unwrap(value, "found", function*() {}), /unwrap needs a nullable pointer/)
+      // @ts-expect-error only a binding can be unwrapped, so its value is read once
+      assert.throws(() => c.unwrap(c.null(nullable), "found", function*() {}), /unwrap needs a binding/)
+      yield* c.return(c.deref(c.address(value)))
+    })
+  })
+  const emitted = emitC(program)
+  assert.match(emitted, /if \(empty != NULL\) \{\n    int32_t\* found = empty;\n    \*found = 0;\n  \}/)
+  assert.match(emitted, /if \(pointer != NULL\) \{\n    int32_t\* pointer_2 = pointer;\n/)
+  const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-"))
+  try {
+    const source = join(directory, "program.c")
+    const executable = join(directory, "program")
+    writeFileSync(source, emitted)
+    const compiled = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", executable], { encoding: "utf8" })
+    assert.ifError(compiled.error)
+    assert.equal(compiled.status, 0, compiled.stderr)
+    const executed = spawnSync(executable, [], { encoding: "utf8" })
+    assert.ifError(executed.error)
+    assert.equal(executed.status, 42, executed.stderr)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test("C executes assignment through pointers, loops, and typed calls", () => {
   const program = c.program(function*() {
     const count = yield* c.fn("count", [c.param("value", c.ptr(c.i32))], c.i32, function*(value) {
