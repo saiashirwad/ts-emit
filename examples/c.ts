@@ -5,9 +5,11 @@ const i32 = (value: number) => c.literal(c.i32, value)
 export const program = c.program(function*() {
   const calls = yield* c.let("calls", i32(0), c.i32)
   const lastGrade = yield* c.let("lastGrade", c.literal(c.char, "?"), c.char)
+  const lastCounter = yield* c.let("lastCounter", c.null(c.nullable(c.ptr(c.i32))), c.nullable(c.ptr(c.i32)))
 
   const increment = yield* c.fn("increment", [c.param("counter", c.ptr(c.i32))], c.void, function*(counter) {
     yield* c.assign(c.deref(counter), c.add(c.deref(counter), i32(1)))
+    yield* c.assign(lastCounter, counter)
   })
 
   const swap = yield* c.fn("swap", [c.param("a", c.ptr(c.i32)), c.param("b", c.ptr(c.i32))], c.void, function*(a, b) {

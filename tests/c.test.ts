@@ -126,6 +126,7 @@ test("the C target emits C source", () => {
   assert.equal(
     emitC(counter()),
     `#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 int32_t count(int32_t limit) {
@@ -148,6 +149,7 @@ int32_t count(int32_t limit) {
   assert.equal(
     emitC(pointers),
     `#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 int32_t main(void) {
@@ -170,7 +172,7 @@ test("C spells leading underscores safely and preserves collisions and reference
   })
   assert.equal(
     emitC(program),
-    "#include <stdbool.h>\n#include <stdint.h>\n\nint32_t binding_value = 1;\nint32_t binding_value_2 = 2;\nint32_t binding_ = 3;\nint32_t* first = &binding_value;\nint32_t* second = &binding_value_2;\n",
+    "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\nint32_t binding_value = 1;\nint32_t binding_value_2 = 2;\nint32_t binding_ = 3;\nint32_t* first = &binding_value;\nint32_t* second = &binding_value_2;\n",
   )
   for (const hint of ["_bad-name", "_\n", "_\r", "_\u2028", "_\u2029", "bad-name", "1value", ""]) {
     assert.throws(() =>
@@ -229,6 +231,7 @@ test("C literals are spelled with their declared type, and must fit it", () => {
   assert.equal(
     emitC(program),
     `#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 bool int32_t_2 = UINT32_C(1) < UINT32_C(2);
@@ -351,6 +354,7 @@ test("C numeric casts preserve target types, precedence, and C semantics", () =>
   assert.equal(
     emitted,
     `#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 int32_t sum = (int32_t)(1.5 + 2.5);
@@ -443,7 +447,50 @@ test("C rejects invalid program structure", () => {
     const x = yield* c.let("x", c.add(i32(1), c.ternary(c.less(i32(2), i32(3)), i32(1), i32(0))), c.i32)
     yield* c.let("p", c.address(x), c.ptr(c.i32))
   })
-  assert.equal(emitC(constants), "#include <stdbool.h>\n#include <stdint.h>\n\nint32_t x = 1 + (2 < 3 ? 1 : 0);\nint32_t* p = &x;\n")
+  assert.equal(
+    emitC(constants),
+    "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\nint32_t x = 1 + (2 < 3 ? 1 : 0);\nint32_t* p = &x;\n",
+  )
+})
+
+test("C nullable pointers hold null, accept pointers, and cannot be dereferenced", () => {
+  const nullable = c.nullable(c.ptr(c.i32))
+  const program = c.program(function*() {
+    const empty = yield* c.let("empty", c.null(nullable), nullable)
+    const value = yield* c.let("value", i32(1), c.i32)
+    const keep = yield* c.fn("keep", [c.param("pointer", nullable)], nullable, function*(pointer) {
+      yield* c.return(pointer)
+    })
+    yield* c.fn("main", [], c.i32, function*() {
+      const pointer = yield* c.let("pointer", c.address(value), nullable)
+      assertType<Equal<lang.Denotes<typeof pointer>, Ptr<I32> | null>>()
+      yield* c.assign(pointer, c.call(keep, empty))
+      yield* c.assign(pointer, c.call(keep, c.address(value)))
+      yield* c.run(c.call(keep, pointer))
+      // @ts-expect-error a nullable pointer is not a pointer
+      c.let("other", pointer, c.ptr(c.i32))
+      // @ts-expect-error a nullable pointer cannot be dereferenced
+      assert.throws(() => c.deref(pointer), /dereference needs a pointer type/)
+      yield* c.return(i32(0))
+    })
+  })
+  const emitted = emitC(program)
+  assert.match(emitted, /int32_t\* empty = NULL;/)
+  assert.match(emitted, /int32_t\* keep\(int32_t\* pointer\)/)
+  assert.match(emitted, /int32_t\* pointer = &value;/)
+  assert.throws(() => c.nullable(c.i32 as never), /only a pointer can be nullable/)
+  const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-"))
+  try {
+    const source = join(directory, "program.c")
+    writeFileSync(source, emitted)
+    const compiled = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", "-c", source, "-o", join(directory, "program.o")], {
+      encoding: "utf8",
+    })
+    assert.ifError(compiled.error)
+    assert.equal(compiled.status, 0, compiled.stderr)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })
 
 test("C executes assignment through pointers, loops, and typed calls", () => {
@@ -546,6 +593,7 @@ test("C arrays denote exact readonly tuples and print checked scalar literals", 
   assert.equal(
     emitC(program),
     `#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 int32_t values[2] = {1, INT32_MIN};

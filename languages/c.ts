@@ -61,7 +61,9 @@ export type Tuple<T, N extends number, A extends readonly T[] = readonly []> =
 export type Void = { readonly [CType]: "void" }
 
 export interface CAssign extends TypeLambda {
-  readonly type: this["Args"] extends readonly [infer A, infer B] ? Equal<A, B> : false
+  readonly type: this["Args"] extends readonly [infer A, infer B]
+    ? Equal<A, B> extends true ? true : [B] extends [Ptr<unknown> | null] ? Equal<A | null, B> : false
+    : false
 }
 
 export interface CTruthy extends TypeLambda {
@@ -97,6 +99,10 @@ export interface PointerTypeNode {
   readonly kind: "pointer-type"
   readonly to: TypeNode<C, unknown>
 }
+export interface NullableTypeNode {
+  readonly kind: "nullable-type"
+  readonly to: TypeNode<C, unknown>
+}
 export interface ArrayTypeNode {
   readonly kind: "array-type"
   readonly element: TypeNode<C, unknown>
@@ -104,7 +110,7 @@ export interface ArrayTypeNode {
 }
 export interface LiteralNode {
   readonly kind: "literal"
-  readonly value: number | bigint | boolean | string | ReadonlyArray<Expr<C, unknown>>
+  readonly value: number | bigint | boolean | string | null | ReadonlyArray<Expr<C, unknown>>
   readonly type: TypeNode<C, unknown>
 }
 export interface UnaryNode {
@@ -136,6 +142,7 @@ const boolTypeClass = typeClass()
 const charTypeClass = typeClass()
 const voidTypeClass = typeClass()
 const pointerTypeClass = typeClass<PointerTypeNode>({ children: (node) => [node.to] })
+const nullableTypeClass = typeClass<NullableTypeNode>({ children: (node) => [node.to] })
 const arrayTypeClass = typeClass<ArrayTypeNode>({ children: (node) => [node.element] })
 const literalClass = exprClass<LiteralNode>({ children: (node) => Array.isArray(node.value) ? node.value : [] })
 const unaryClass = exprClass<UnaryNode>({ children: (node) => [node.operand] })
@@ -191,6 +198,12 @@ export const c = {
     if (to.kind === "array-type") throw new Error("pointer to array is not supported")
     return typeNode(pointerTypeClass, { kind: "pointer-type", to })
   },
+  nullable: <T extends Ptr<unknown>, F extends Facts>(
+    to: TypeNode<C, T, F>,
+  ): TypeNode<C, T | null, { readonly kind: "nullable-type" } | F> => {
+    if (to.kind !== "pointer-type") throw new Error("only a pointer can be nullable")
+    return typeNode(nullableTypeClass, { kind: "nullable-type", to })
+  },
 
   literal: <
     D extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char | readonly (I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char)[],
@@ -233,6 +246,9 @@ export const c = {
     }
     return expr(literalClass, { kind: "literal", value }, type)
   },
+  null: <T extends Ptr<unknown>, F extends Facts>(
+    type: TypeNode<C, T | null, F>,
+  ): Expr<C, T | null, { readonly kind: "literal" } | F> => expr(literalClass, { kind: "literal", value: null }, type),
   true: expr<C, boolean, { readonly kind: "literal" | "bool-type" }>(
     literalClass,
     { kind: "literal", value: true },
@@ -394,9 +410,11 @@ export const cTarget = defineTarget(
       throw new Error("array types are only spelled in declarations")
     },
     "pointer-type": (node: PointerTypeNode, emit) => `${emit.node(node.to).text}*`,
+    "nullable-type": (node: NullableTypeNode, emit) => emit.node(node.to).text,
     literal: (node: LiteralNode, emit): Fragment => {
       const { value } = node
       if (Array.isArray(value)) return frag(POSTFIX, `{${value.map((item) => emit.node(item).text).join(", ")}}`)
+      if (value === null) return frag(POSTFIX, "NULL")
       if (typeof value === "boolean") return frag(POSTFIX, String(value))
       if (typeof value === "string") return frag(POSTFIX, `'${charSpelling(value)}'`)
       if (typeof value !== "number" && typeof value !== "bigint") throw new Error("numeric literal needs a number")
@@ -463,5 +481,6 @@ export const cTarget = defineTarget(
   },
 )
 
+// TODO: come up with an elegant, unified way to do imports instead of always including every header.
 export const emitC = <Kinds extends keyof typeof cTarget.handlers>(program: Program<C, Kinds>): string =>
-  `#include <stdbool.h>\n#include <stdint.h>\n\n${emit(program as Program<C, keyof typeof cTarget.handlers>, cTarget)}\n`
+  `#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n${emit(program as Program<C, keyof typeof cTarget.handlers>, cTarget)}\n`

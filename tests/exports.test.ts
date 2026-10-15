@@ -13,7 +13,7 @@ test("package entrypoints emit C, Lua, and Prolog", () => {
     })
   })
   assert.equal(emit(program, cTarget), "int32_t main(void) {\n  return 0;\n}")
-  assert.equal(emitC(program), "#include <stdbool.h>\n#include <stdint.h>\n\nint32_t main(void) {\n  return 0;\n}\n")
+  assert.equal(emitC(program), "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\nint32_t main(void) {\n  return 0;\n}\n")
 
   assert.equal(
     emitLua(lua.program(function*() {
