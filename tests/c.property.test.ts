@@ -7,11 +7,13 @@ import { test } from "node:test"
 
 import fc from "fast-check"
 
-import { type Bits, type C, c, emitC, type Int } from "../languages/c.ts"
+import { type Bits, type C, c, emitC, type I16, type I32, type I64, type I8, type U16, type U32, type U64, type U8 } from "../languages/c.ts"
 import type { Expr, TypeNode } from "../src/index.ts"
 
+type Int = I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64
+
 type Integer = { bits: Bits; signed: boolean }
-type Operand = Integer & { value: number }
+type Operand = Integer & { value: bigint }
 type Case = { left: Operand; right: Operand; operation: "add" | "less" }
 
 const integers: Integer[] = [8, 16, 32, 64].flatMap((bits) => [
@@ -44,11 +46,11 @@ const oracle = ({ left, right, operation }: Case) => {
 }
 
 const operand = fc.constantFrom(...integers).chain((type) => {
-  const min = Number(minimum(type) < BigInt(Number.MIN_SAFE_INTEGER) ? BigInt(Number.MIN_SAFE_INTEGER) : minimum(type))
-  const max = Number(maximum(type) > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(Number.MAX_SAFE_INTEGER) : maximum(type))
+  const min = minimum(type)
+  const max = maximum(type)
   return fc.oneof(
-    fc.constantFrom(min, min + 1, max - 1, max, 0, 1, ...(type.signed ? [-1] : [])),
-    fc.integer({ min, max }),
+    fc.constantFrom(min, min + 1n, max - 1n, max, 0n, 1n, ...(type.signed ? [-1n] : [])),
+    fc.bigInt({ min, max }),
   ).map((value): Operand => ({ ...type, value }))
 })
 const arithmeticCase = fc.record({
@@ -56,7 +58,8 @@ const arithmeticCase = fc.record({
   right: operand,
   operation: fc.constantFrom("add" as const, "less" as const),
 }).filter((item) => oracle(item) !== undefined)
-const typeNode = (type: Integer): TypeNode<C, Int, { readonly kind: "int-type" }> => type.signed ? c.int(type.bits) : c.uint(type.bits)
+const typeNode = (type: Integer): TypeNode<C, Int, { readonly kind: "int-type" }> =>
+  type.signed ? { 8: c.i8, 16: c.i16, 32: c.i32, 64: c.i64 }[type.bits] : { 8: c.u8, 16: c.u16, 32: c.u32, 64: c.u64 }[type.bits]
 const options: fc.Parameters<unknown> = {
   seed: Number(process.env.FC_SEED ?? 20261015),
   numRuns: 20,
@@ -72,11 +75,19 @@ test("C integer arithmetic agrees with an independent BigInt oracle", () => {
           const resultType = expected[index]!.type
           yield* c.fn(`case_${index}`, [], typeNode(resultType), function*() {
             // Bind narrow operands: bare 8/16-bit literals would instead have C's plain int type.
-            const left = yield* c.let("left", c.literal(typeNode(item.left), item.left.value), typeNode(item.left))
-            const right = yield* c.let("right", c.literal(typeNode(item.right), item.right.value), typeNode(item.right))
+            const left = yield* c.let(
+              "left",
+              c.literal(typeNode(item.left), item.left.bits === 64 ? item.left.value : Number(item.left.value)),
+              typeNode(item.left),
+            )
+            const right = yield* c.let(
+              "right",
+              c.literal(typeNode(item.right), item.right.bits === 64 ? item.right.value : Number(item.right.value)),
+              typeNode(item.right),
+            )
             const expression: Expr<C, Int, { readonly kind: "add" | "ternary" | "less" | "ref" | "literal" | "int-type" }> = item.operation === "add"
               ? c.add(left, right)
-              : c.ternary(c.less(left, right), c.literal(c.int(32), 1), c.literal(c.int(32), 0))
+              : c.ternary(c.less(left, right), c.literal(c.i32, 1), c.literal(c.i32, 0))
             assert.deepEqual(expression.type, typeNode(resultType))
             yield* c.return(expression)
           })

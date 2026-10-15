@@ -6,8 +6,8 @@ Build C, Prolog, and Lua programs from TypeScript.
 import { c, emitC } from "@texoport/ts-emit/languages/c"
 
 const program = c.program(function*() {
-  yield* c.fn("main", [], c.int(32), function*() {
-    yield* c.return(c.literal(c.int(32), 0))
+  yield* c.fn("main", [], c.i32, function*() {
+    yield* c.return(c.literal(c.i32, 0))
   })
 })
 

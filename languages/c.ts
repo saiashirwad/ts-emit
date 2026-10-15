@@ -37,23 +37,36 @@ export type Char = string & { readonly [CType]: "char" }
 
 export type Bits = 8 | 16 | 32 | 64
 
-export interface Int<B extends Bits = Bits, Signed extends boolean = boolean> {
-  readonly c: "int"
-  readonly bits: B
-  readonly signed: Signed
-}
-export interface Double {
-  readonly c: "double"
-}
-export interface Ptr<T> {
-  readonly c: "pointer"
-  readonly to: T
-}
+export type I8 = number & { readonly [CType]: "i8" }
+export type I16 = number & { readonly [CType]: "i16" }
+export type I32 = number & { readonly [CType]: "i32" }
+export type I64 = bigint & { readonly [CType]: "i64" }
+export type U8 = number & { readonly [CType]: "u8" }
+export type U16 = number & { readonly [CType]: "u16" }
+export type U32 = number & { readonly [CType]: "u32" }
+export type U64 = bigint & { readonly [CType]: "u64" }
+export type F64 = number & { readonly [CType]: "f64" }
+export type Ptr<T> = { readonly [CType]: "pointer"; readonly to: T }
 export interface Void {
   readonly c: "void"
 }
 
-export type Arith = Int | Double
+type Int<B extends Bits = Bits, Signed extends boolean = boolean> =
+  | (Signed extends true ? { 8: I8; 16: I16; 32: I32; 64: I64 }[B] : never)
+  | (Signed extends false ? { 8: U8; 16: U16; 32: U32; 64: U64 }[B] : never)
+
+type IntParts<T> =
+    T extends I8 ? [8, true]
+  : T extends I16 ? [16, true]
+  : T extends I32 ? [32, true]
+  : T extends I64 ? [64, true]
+  : T extends U8 ? [8, false]
+  : T extends U16 ? [16, false]
+  : T extends U32 ? [32, false]
+  : T extends U64 ? [64, false]
+  : never
+
+export type Arith = Int | F64
 
 type Wider<A extends Bits, B extends Bits> =
     A extends 64 ? 64
@@ -72,8 +85,13 @@ type IntConverted<X extends Bits, SA extends boolean, Y extends Bits, SB extends
   : Int<Y, SB>
 
 export type Converted<A, B> =
-    [A, B] extends [Double, Arith] | [Arith, Double] ? Double
-  : [Promoted<A>, Promoted<B>] extends [Int<infer X, infer SA>, Int<infer Y, infer SB>] ? IntConverted<X, SA, Y, SB>
+    [A, B] extends [F64, Arith] | [Arith, F64] ? F64
+  : [A, B] extends [Int, Int] ?
+      [IntParts<Promoted<A>>, IntParts<Promoted<B>>] extends [
+        [infer X extends Bits, infer SA extends boolean],
+        [infer Y extends Bits, infer SB extends boolean],
+      ] ? IntConverted<X, SA, Y, SB>
+    : never
   : never
 
 export interface CAssign extends TypeLambda {
@@ -117,7 +135,7 @@ export interface PointerTypeNode {
 }
 export interface LiteralNode {
   readonly kind: "literal"
-  readonly value: number | boolean | string
+  readonly value: number | bigint | boolean | string
   readonly type: TypeNode<C, unknown>
 }
 export interface UnaryNode {
@@ -167,7 +185,7 @@ const intType = (bits: Bits, signed: boolean): RuntimeType => typeNode(intTypeCl
 const converted = (left: RuntimeType, right: RuntimeType): RuntimeType => {
   if (left.kind === "pointer-type") return left
   if (right.kind === "pointer-type") return right
-  if (left.kind === "double-type" || right.kind === "double-type") return c.double
+  if (left.kind === "double-type" || right.kind === "double-type") return c.f64
   if (left.kind !== "int-type" || right.kind !== "int-type") throw new Error("arithmetic needs concrete C types")
   const promote = (type: RuntimeType): IntTypeNode => {
     const node = type as unknown as IntTypeNode
@@ -184,9 +202,15 @@ export const c = {
   ...addConstruct<C>(converted),
   ...lessConstruct<C>((): RuntimeType => c.bool),
 
-  int: <B extends Bits>(bits: B): TypeNode<C, Int<B, true>, IntFacts> => typeNode(intTypeClass, { kind: "int-type", bits, signed: true }),
-  uint: <B extends Bits>(bits: B): TypeNode<C, Int<B, false>, IntFacts> => typeNode(intTypeClass, { kind: "int-type", bits, signed: false }),
-  double: typeNode<C, Double, { readonly kind: "double-type" }>(doubleTypeClass, { kind: "double-type" }),
+  i8: typeNode<C, I8, IntFacts>(intTypeClass, { kind: "int-type", bits: 8, signed: true }),
+  i16: typeNode<C, I16, IntFacts>(intTypeClass, { kind: "int-type", bits: 16, signed: true }),
+  i32: typeNode<C, I32, IntFacts>(intTypeClass, { kind: "int-type", bits: 32, signed: true }),
+  i64: typeNode<C, I64, IntFacts>(intTypeClass, { kind: "int-type", bits: 64, signed: true }),
+  u8: typeNode<C, U8, IntFacts>(intTypeClass, { kind: "int-type", bits: 8, signed: false }),
+  u16: typeNode<C, U16, IntFacts>(intTypeClass, { kind: "int-type", bits: 16, signed: false }),
+  u32: typeNode<C, U32, IntFacts>(intTypeClass, { kind: "int-type", bits: 32, signed: false }),
+  u64: typeNode<C, U64, IntFacts>(intTypeClass, { kind: "int-type", bits: 64, signed: false }),
+  f64: typeNode<C, F64, { readonly kind: "double-type" }>(doubleTypeClass, { kind: "double-type" }),
   char: typeNode<C, Char, { readonly kind: "char-type" }>(charTypeClass, { kind: "char-type" }),
   bool: typeNode<C, boolean, { readonly kind: "bool-type" }>(boolTypeClass, { kind: "bool-type" }),
   void: typeNode<C, Void, { readonly kind: "void-type" }>(voidTypeClass, { kind: "void-type" }),
@@ -195,17 +219,25 @@ export const c = {
 
   literal: <D extends Arith | Char, F extends Facts>(
     type: TypeNode<C, D, F>,
-    value: D extends Char ? string : number,
+    value: D extends Char ? string : D extends I64 | U64 ? bigint : number,
   ): Expr<C, D, { readonly kind: "literal" } | F> => {
     if (type.kind === "char-type" && (typeof value !== "string" || value.length !== 1 || value.charCodeAt(0) > 127)) {
       throw new Error(`char cannot hold the literal ${JSON.stringify(value)}`)
     }
     if (type.kind === "int-type") {
       const node = fieldsOf<IntTypeNode>(type)
-      const min = node.signed ? -(2 ** (node.bits - 1)) : 0
-      const max = node.signed ? 2 ** (node.bits - 1) - 1 : 2 ** node.bits - 1
-      if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) {
-        throw new Error(`${intName(node)} cannot hold the literal ${value} exactly`)
+      if (node.bits === 64) {
+        const min = node.signed ? -(1n << 63n) : 0n
+        const max = node.signed ? (1n << 63n) - 1n : (1n << 64n) - 1n
+        if (typeof value !== "bigint" || value < min || value > max) {
+          throw new Error(`${intName(node)} cannot hold the literal ${value} exactly`)
+        }
+      } else {
+        const min = node.signed ? -(2 ** (node.bits - 1)) : 0
+        const max = 2 ** (node.bits - (node.signed ? 1 : 0)) - 1
+        if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) {
+          throw new Error(`${intName(node)} cannot hold the literal ${value} exactly`)
+        }
       }
     }
     return expr(literalClass, { kind: "literal", value }, type)
@@ -314,12 +346,18 @@ export const cTarget = defineTarget(
       if (typeof value === "string") return frag(POSTFIX, `'${charSpelling(value)}'`)
       if (node.type.kind === "int-type") {
         const type = node.type as unknown as IntTypeNode
+        if (typeof value === "bigint") {
+          if (value === -(1n << 63n)) return frag(POSTFIX, "INT64_MIN")
+          const magnitude = `${type.signed ? "" : "U"}INT64_C(${value < 0n ? -value : value})`
+          return value < 0n ? frag(UNARY, `-${magnitude}`) : frag(POSTFIX, magnitude)
+        }
         if (type.bits === 32 && type.signed && value === -(2 ** 31)) return frag(POSTFIX, "INT32_MIN")
         const magnitude = type.bits < 32 || (type.bits === 32 && type.signed)
           ? String(Math.abs(value))
           : `${type.signed ? "" : "U"}INT${type.bits}_C(${Math.abs(value)})`
         return value < 0 ? frag(UNARY, `-${magnitude}`) : frag(POSTFIX, magnitude)
       }
+      if (typeof value !== "number") throw new Error("numeric literal needs a number")
       if (Number.isNaN(value)) return frag(MULTIPLY, "0.0 / 0.0")
       if (value === Infinity) return frag(MULTIPLY, "1.0 / 0.0")
       if (value === -Infinity) return frag(MULTIPLY, "-1.0 / 0.0")

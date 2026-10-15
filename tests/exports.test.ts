@@ -8,8 +8,8 @@ import { emitProlog, prolog } from "@texoport/ts-emit/languages/prolog"
 
 test("package entrypoints emit C, Lua, and Prolog", () => {
   const program = c.program(function*() {
-    yield* c.fn("main", [], c.int(32), function*() {
-      yield* c.return(c.literal(c.int(32), 0))
+    yield* c.fn("main", [], c.i32, function*() {
+      yield* c.return(c.literal(c.i32, 0))
     })
   })
   assert.equal(emit(program, cTarget), "int32_t main(void) {\n  return 0;\n}")

@@ -1,29 +1,29 @@
 import { c, emitC } from "../languages/c.ts"
 
-const i32 = (value: number) => c.literal(c.int(32), value)
+const i32 = (value: number) => c.literal(c.i32, value)
 
 export const program = c.program(function*() {
-  const calls = yield* c.let("calls", i32(0), c.int(32))
+  const calls = yield* c.let("calls", i32(0), c.i32)
   const lastGrade = yield* c.let("lastGrade", c.literal(c.char, "?"), c.char)
 
-  const increment = yield* c.fn("increment", [c.param("counter", c.ptr(c.int(32)))], c.void, function*(counter) {
+  const increment = yield* c.fn("increment", [c.param("counter", c.ptr(c.i32))], c.void, function*(counter) {
     yield* c.assign(c.deref(counter), c.add(c.deref(counter), i32(1)))
   })
 
-  const swap = yield* c.fn("swap", [c.param("a", c.ptr(c.int(32))), c.param("b", c.ptr(c.int(32)))], c.void, function*(a, b) {
-    const t = yield* c.let("t", c.deref(a), c.int(32))
+  const swap = yield* c.fn("swap", [c.param("a", c.ptr(c.i32)), c.param("b", c.ptr(c.i32))], c.void, function*(a, b) {
+    const t = yield* c.let("t", c.deref(a), c.i32)
     yield* c.assign(c.deref(a), c.deref(b))
     yield* c.assign(c.deref(b), t)
   })
 
   // TODO: allow recursion. fib loops instead because its binding only exists once c.fn returns.
-  const fib = yield* c.fn("fib", [c.param("n", c.int(32))], c.int(64), function*(n) {
+  const fib = yield* c.fn("fib", [c.param("n", c.i32)], c.i64, function*(n) {
     yield* c.run(c.call(increment, c.address(calls)))
-    const a = yield* c.let("a", i32(0), c.int(64))
-    const b = yield* c.let("b", i32(1), c.int(64))
-    const i = yield* c.let("i", i32(0), c.int(32))
+    const a = yield* c.let("a", i32(0), c.i64)
+    const b = yield* c.let("b", i32(1), c.i64)
+    const i = yield* c.let("i", i32(0), c.i32)
     yield* c.while(c.less(i, n), function*() {
-      const sum = yield* c.let("sum", c.add(a, b), c.int(64))
+      const sum = yield* c.let("sum", c.add(a, b), c.i64)
       yield* c.assign(a, b)
       yield* c.assign(b, sum)
       yield* c.assign(i, c.add(i, i32(1)))
@@ -31,7 +31,7 @@ export const program = c.program(function*() {
     yield* c.return(a)
   })
 
-  const max = yield* c.fn("max", [c.param("x", c.int(64)), c.param("y", c.int(64))], c.int(64), function*(x, y) {
+  const max = yield* c.fn("max", [c.param("x", c.i64), c.param("y", c.i64)], c.i64, function*(x, y) {
     yield* c.if(c.less(x, y), function*() {
       yield* c.return(y)
     }, function*() {
@@ -39,11 +39,11 @@ export const program = c.program(function*() {
     })
   })
 
-  const min = yield* c.fn("min", [c.param("x", c.int(64)), c.param("y", c.int(64))], c.int(64), function*(x, y) {
+  const min = yield* c.fn("min", [c.param("x", c.i64), c.param("y", c.i64)], c.i64, function*(x, y) {
     yield* c.return(c.ternary(c.less(x, y), x, y))
   })
 
-  const grade = yield* c.fn("grade", [c.param("score", c.int(32))], c.char, function*(score) {
+  const grade = yield* c.fn("grade", [c.param("score", c.i32)], c.char, function*(score) {
     yield* c.if(c.less(score, i32(50)), function*() {
       yield* c.return(c.literal(c.char, "F"))
     })
@@ -53,17 +53,17 @@ export const program = c.program(function*() {
     yield* c.return(c.literal(c.char, "A"))
   })
 
-  yield* c.fn("main", [], c.int(32), function*() {
-    const largest = yield* c.let("largest", i32(0), c.int(64))
-    const i = yield* c.let("i", i32(0), c.int(32))
+  yield* c.fn("main", [], c.i32, function*() {
+    const largest = yield* c.let("largest", i32(0), c.i64)
+    const i = yield* c.let("i", i32(0), c.i32)
     yield* c.while(c.less(i, i32(12)), function*() {
       yield* c.assign(largest, c.call(max, largest, c.call(fib, i)))
       yield* c.assign(i, c.add(i, i32(1)))
     })
-    const capped = yield* c.let("capped", c.call(min, largest, i32(100)), c.int(32))
+    const capped = yield* c.let("capped", c.call(min, largest, i32(100)), c.i32)
     yield* c.assign(lastGrade, c.call(grade, capped))
-    const first = yield* c.let("first", i32(7), c.int(32))
-    const second = yield* c.let("second", i32(3), c.int(32))
+    const first = yield* c.let("first", i32(7), c.i32)
+    const second = yield* c.let("second", i32(3), c.i32)
     const outOfOrder = yield* c.let("outOfOrder", c.less(second, first), c.bool)
     yield* c.if(outOfOrder, function*() {
       yield* c.run(c.call(swap, c.address(first), c.address(second)))
