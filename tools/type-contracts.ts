@@ -5,8 +5,9 @@ import { join, resolve } from "node:path"
 
 const directory = mkdtempSync(resolve(".type-contracts-"))
 const file = join(directory, "contract.ts")
-const prefix = `import { c } from "../languages/c.ts"
-const n = c.literal(c.int(32), 1)
+const prefix = `import { c, type C, type Int } from "../languages/c.ts"
+import type { Ref } from "../src/index.ts"
+declare const n: Ref<C, Int<32, true>>
 const p = c.address(n)
 `
 const cases = [
@@ -14,6 +15,8 @@ const cases = [
   { name: "pointer assignment", valid: "c.let(\"p\", p, c.ptr(c.int(32)))", invalid: "c.let(\"p\", p, c.ptr(c.double))" },
   { name: "pointer arithmetic", valid: "c.add(p, n)", invalid: "c.add(p, p)" },
   { name: "pointer dereference", valid: "c.deref(p)", invalid: "c.deref(n)" },
+  { name: "address of an lvalue", valid: "c.address(c.deref(p))", invalid: "c.address(c.literal(c.int(32), 1))" },
+  { name: "assignment through a pointer", valid: "c.assign(c.deref(p), n)", invalid: "c.assign(p, n)" },
   { name: "declared binding type", valid: "c.let(\"n\", n, c.int(32))", invalid: "c.let(\"n\", n)" },
   {
     name: "function result",

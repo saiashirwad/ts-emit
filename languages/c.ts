@@ -14,8 +14,10 @@ import {
   type Fragment,
   functionConstruct,
   type Handler,
+  isLvalue,
   type KindsOf,
   lessConstruct,
+  type Lvalue,
   type Program,
   type RuntimeType,
   type Stmt,
@@ -115,6 +117,7 @@ export interface LiteralNode {
 export interface UnaryNode {
   readonly kind: "address" | "deref"
   readonly operand: Expr<C, unknown>
+  readonly lvalue?: true
 }
 
 const intTypeClass = typeClass<IntTypeNode>()
@@ -182,18 +185,20 @@ export const c = {
     }
     return expr(literalClass, { kind: "literal", value }, type)
   },
-  address: <D, F extends Facts>(operand: Expr<C, D, F>): Expr<C, Ptr<D>, { readonly kind: "address" } | F> =>
-    expr(unaryClass, { kind: "address", operand }, typeNode(pointerTypeClass, { kind: "pointer-type", to: operand.type })),
-  deref: <D, F extends Facts>(operand: Expr<C, Ptr<D>, F>): Expr<C, D, { readonly kind: "deref" } | F> =>
-    expr(
+  address: <D, F extends Facts>(operand: Lvalue<C, D, F>): Expr<C, Ptr<D>, { readonly kind: "address" } | F> => {
+    if (!isLvalue(operand)) throw new Error("only an lvalue has an address")
+    return expr(unaryClass, { kind: "address", operand }, typeNode(pointerTypeClass, { kind: "pointer-type", to: operand.type }))
+  },
+  deref: <D, F extends Facts>(operand: Expr<C, Ptr<D>, F>): Lvalue<C, D, { readonly kind: "deref" } | F> =>
+    expr<C, D, { readonly kind: "deref" } | F>(
       unaryClass,
-      { kind: "deref", operand },
+      { kind: "deref", operand, lvalue: true },
       operand.type.kind === "pointer-type"
         ? (operand.type as unknown as PointerTypeNode).to
         : (() => {
           throw new Error("dereference needs a pointer type")
         })(),
-    ),
+    ) as Lvalue<C, D, { readonly kind: "deref" } | F>,
 
   program: <Y extends Stmt<C, any, any>>(body: () => Generator<Y, void, unknown>): Program<C, KindsOf<Y>> => {
     const program = builder<C>()(body)

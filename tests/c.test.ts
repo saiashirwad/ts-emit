@@ -85,8 +85,9 @@ export const functionContracts = () => {
       yield* c.let("nine", c.call(square, i32(3)), c.int(64))
     })
     c.call(square, f64(3))
+    const one = yield* c.let("one", i32(1), c.int(32))
     // @ts-expect-error a pointer argument does not convert to an int parameter
-    c.call(square, c.address(c.call(square, i32(1))))
+    c.call(square, c.address(one))
     // @ts-expect-error too many arguments
     c.call(square, i32(1), i32(2))
     // @ts-expect-error too few arguments
@@ -291,6 +292,7 @@ test("C rejects invalid program structure", () => {
       }),
     /the top-level "let" of "y" needs a constant initializer in C/,
   )
+  assert.throws(() => c.address(i32(1) as never), /only an lvalue has an address/)
   const constants = c.program(function*() {
     const x = yield* c.let("x", c.add(i32(1), c.less(i8(2), f64(3))), c.int(32))
     yield* c.let("p", c.add(i32(1), c.address(x)), c.ptr(c.int(32)))
@@ -298,7 +300,7 @@ test("C rejects invalid program structure", () => {
   assert.equal(emitC(constants), "#include <stdint.h>\n\nint32_t x = 1 + (2 < 3.0);\nint32_t* p = 1 + &x;\n")
 })
 
-test("C executes pointer arithmetic, loops, and typed calls", () => {
+test("C executes pointer arithmetic, assignment through pointers, loops, and typed calls", () => {
   const program = c.program(function*() {
     const count = yield* c.fn("count", [c.param("value", c.ptr(c.int(32)))], c.int(32), function*(value) {
       const total = yield* c.let("total", i32(0), c.int(32))
@@ -310,8 +312,10 @@ test("C executes pointer arithmetic, loops, and typed calls", () => {
       yield* c.return(total)
     })
     yield* c.fn("main", [], c.int(32), function*() {
-      const value = yield* c.let("value", i32(14), c.int(32))
-      yield* c.return(c.call(count, c.address(value)))
+      const value = yield* c.let("value", i32(0), c.int(32))
+      const pointer = yield* c.let("pointer", c.address(value), c.ptr(c.int(32)))
+      yield* c.assign(c.deref(pointer), i32(14))
+      yield* c.return(c.call(count, pointer))
     })
   })
   const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-"))

@@ -19,7 +19,11 @@ import {
 } from "./node.ts"
 import type { Check, Kind, TypeLambda } from "./rule.ts"
 
-export interface Ref<L, D, F extends Facts = { readonly kind: "ref" }> extends Expr<L, D, F> {
+export interface Lvalue<L, D, F extends Facts = Facts> extends Expr<L, D, F> {
+  readonly lvalue: true
+}
+
+export interface Ref<L, D, F extends Facts = { readonly kind: "ref" }> extends Lvalue<L, D, F> {
   readonly binding: Binding
 }
 
@@ -27,11 +31,15 @@ export interface RefNode {
   readonly kind: "ref"
   readonly binding: Binding
   readonly type: RuntimeType
+  readonly lvalue: true
 }
 
 const refClass = exprClass<RefNode>({ references: (node) => [node.binding] })
 
-export const ref = <L, D>(target: Binding, type: RuntimeType): Ref<L, D> => expr(refClass, { kind: "ref", binding: target }, type) as Ref<L, D>
+export const ref = <L, D>(target: Binding, type: RuntimeType): Ref<L, D> =>
+  expr(refClass, { kind: "ref", binding: target, lvalue: true }, type) as Ref<L, D>
+
+export const isLvalue = (node: AnyNode): boolean => (node as { readonly lvalue?: true }).lvalue === true
 
 export interface LetNode {
   readonly kind: "let"
@@ -84,10 +92,13 @@ export const structured = <L extends { readonly Assign: TypeLambda; readonly Tru
     return stmt(letClass, { kind: "let", binding: declared, type, init }, ref<L, D>(declared, type))
   },
 
-  assign: <D, I, FI extends Facts>(
-    target: Ref<L, D>,
-    value: Expr<L, I, FI> & Check<Kind<L["Assign"], [I, D]>, "value is not assignable to the binding", { from: I; to: D }>,
-  ): Stmt<L, { readonly kind: "assign" | "ref" } | FI> => stmt(assignClass, { kind: "assign", target, value }),
+  assign: <D, FT extends Facts, I, FI extends Facts>(
+    target: Lvalue<L, D, FT>,
+    value: Expr<L, I, FI> & Check<Kind<L["Assign"], [I, D]>, "value is not assignable to the target", { from: I; to: D }>,
+  ): Stmt<L, { readonly kind: "assign" } | FT | FI> => {
+    if (!isLvalue(target)) throw new Error("assignment needs an lvalue target")
+    return stmt(assignClass, { kind: "assign", target, value })
+  },
 
   if: <E extends Expr<L, any, any>, Y extends Stmt<L, any, any>, Z extends Stmt<L, any, any> = never>(
     condition: E & Check<Kind<L["Truthy"], [Denotes<E>]>, "condition has the wrong type">,
