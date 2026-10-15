@@ -25,19 +25,8 @@ import {
   type TypeNode,
   typeNode,
   walk,
-} from "../src/lang/index.ts"
-import type {
-  AssignNode,
-  BinaryNode,
-  CallNode,
-  ExpressionNode,
-  FunctionNode,
-  IfNode,
-  LetNode,
-  RefNode,
-  ReturnNode,
-  WhileNode,
-} from "../src/lang/index.ts"
+} from "../src/index.ts"
+import type { AssignNode, BinaryNode, CallNode, ExpressionNode, FunctionNode, IfNode, LetNode, RefNode, ReturnNode, WhileNode } from "../src/index.ts"
 
 export type Bits = 8 | 16 | 32 | 64
 

@@ -1,5 +1,5 @@
-import { type AnyNode, type Expr, expr, exprClass, type Facts, type RuntimeType } from "../node.ts"
-import type { Check, Kind, TypeLambda } from "../rule.ts"
+import { type AnyNode, type Expr, expr, exprClass, type Facts, type RuntimeType } from "./node.ts"
+import type { Check, Kind, TypeLambda } from "./rule.ts"
 
 export interface BinaryNode {
   readonly kind: "add" | "less"

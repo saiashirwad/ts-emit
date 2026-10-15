@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 
 import { type C, c, type Converted, cTarget, type Double, emitC, type Int, type Ptr } from "../languages/c.ts"
-import * as lang from "../src/lang/index.ts"
+import * as lang from "../src/index.ts"
 import { assertType, type Equal } from "./typing.ts"
 
 const i8 = (value: number) => c.literal(c.int(8), value)

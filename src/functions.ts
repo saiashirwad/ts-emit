@@ -15,8 +15,8 @@ import {
   stmt,
   stmtClass,
   type TypeNode,
-} from "../node.ts"
-import type { Accepts, Check, Kind, Rejected, TypeLambda } from "../rule.ts"
+} from "./node.ts"
+import type { Accepts, Check, Kind, Rejected, TypeLambda } from "./rule.ts"
 import { type Ref, ref } from "./structured.ts"
 
 export interface Signature<Params extends readonly unknown[], Returns> {

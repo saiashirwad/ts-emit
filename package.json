@@ -1,9 +1,9 @@
 {
   "name": "@texoport/ts-emit",
   "type": "module",
-  "module": "src/lang/index.ts",
+  "module": "src/index.ts",
   "exports": {
-    ".": "./src/lang/index.ts",
+    ".": "./src/index.ts",
     "./languages/c": "./languages/c.ts",
     "./languages/prolog": "./languages/prolog.ts",
     "./languages/lua": "./languages/lua.ts"

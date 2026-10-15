@@ -16,8 +16,8 @@ import {
   stmt,
   stmtClass,
   type TypeNode,
-} from "../node.ts"
-import type { Check, Kind, TypeLambda } from "../rule.ts"
+} from "./node.ts"
+import type { Check, Kind, TypeLambda } from "./rule.ts"
 
 export interface Ref<L, D, F extends Facts = { readonly kind: "ref" }> extends Expr<L, D, F> {
   readonly binding: Binding

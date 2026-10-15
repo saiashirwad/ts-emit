@@ -8,7 +8,7 @@ import { test } from "node:test"
 import fc from "fast-check"
 
 import { type Bits, type C, c, emitC, type Int } from "../languages/c.ts"
-import type { Expr, TypeNode } from "../src/lang/index.ts"
+import type { Expr, TypeNode } from "../src/index.ts"
 
 type Integer = { bits: Bits; signed: boolean }
 type Operand = Integer & { value: number }

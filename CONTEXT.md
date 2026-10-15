@@ -4,7 +4,7 @@ TypeScript builders emit C, Prolog, and Lua.
 
 ## Core
 
-`src/lang` supports the C builder. Nodes carry their language, denotation, and the kinds needed by a target. Statements are iterable so `yield*` can return a reference to a declared binding. Blocks collect statements. Binding identities keep references separate from emitted names.
+`src` supports the C builder. Nodes carry their language, denotation, and the kinds needed by a target. Statements are iterable so `yield*` can return a reference to a declared binding. Blocks collect statements. Binding identities keep references separate from emitted names.
 
 `Structure` describes children, declarations, and references. Program construction rejects references outside their scope and duplicate binding identities. Targets assign valid, nonconflicting names and print nodes with precedence-aware fragments.
 
