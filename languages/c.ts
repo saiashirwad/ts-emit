@@ -321,7 +321,7 @@ export const c = {
       children(parent).forEach((child) => {
         if (child.role !== "expr" || fieldsOf<Expr<C, unknown>>(child).type.kind !== "array-type") return
         if (parent.kind === "let" && fieldsOf<LetNode>(parent).init === child && child.kind === "literal") return
-        if (parent.kind === "index" && fieldsOf<IndexNode>(parent).array === child && child.kind !== "literal") return
+        if (parent.kind === "index" && fieldsOf<IndexNode>(parent).array === child && child.kind === "ref") return
         throw new Error("whole array use is not supported")
       })
     })
@@ -396,7 +396,9 @@ export const cTarget = defineTarget(
     "bool-type": () => "bool",
     "char-type": () => "char",
     "void-type": () => "void",
-    "array-type": (node: ArrayTypeNode, emit) => emit.node(node.element).text,
+    "array-type": () => {
+      throw new Error("array types are only spelled in declarations")
+    },
     "pointer-type": (node: PointerTypeNode, emit) => `${emit.node(node.to).text}*`,
     literal: (node: LiteralNode, emit): Fragment => {
       const { value } = node
