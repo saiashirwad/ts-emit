@@ -68,6 +68,15 @@ export const conversionContracts = () => {
       })
       // @ts-expect-error a value is not assignable to a pointer binding
       yield* c.assign(p, n)
+      const letter = yield* c.let("letter", c.literal(c.char, "a"), c.char)
+      // @ts-expect-error a char is not an int
+      yield* c.let("code", letter, c.int(32))
+      // @ts-expect-error an int is not a char
+      yield* c.let("other", n, c.char)
+      // @ts-expect-error a char is not arithmetic
+      c.add(letter, i32(1))
+      // @ts-expect-error chars cannot be compared yet
+      c.less(letter, letter)
     })
   })
 }
@@ -252,6 +261,9 @@ bool infinity = -1.0 / 0.0 < 1.0 / 0.0;
   assert.throws(() => c.literal(c.int(32), 1.5), /int32_t cannot hold the literal 1.5 exactly/)
   assert.throws(() => c.literal(c.uint(8), -1), /uint8_t cannot hold the literal -1 exactly/)
   assert.throws(() => c.literal(c.int(64), 2 ** 53), /int64_t cannot hold the literal 9007199254740992 exactly/)
+  assert.throws(() => c.literal(c.char, "é"), /char cannot hold the literal "é"/)
+  assert.throws(() => c.literal(c.char, "ab"), /char cannot hold the literal "ab"/)
+  assert.throws(() => c.literal(c.char, ""), /char cannot hold the literal ""/)
 })
 
 test("C rejects invalid program structure", () => {
@@ -328,6 +340,31 @@ test("C executes pointer arithmetic, assignment through pointers, loops, and typ
     const executed = spawnSync(executable, [], { encoding: "utf8" })
     assert.ifError(executed.error)
     assert.equal(executed.status, 42, executed.stderr)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("C char literals compile to the ASCII characters they name", () => {
+  const codes = Array.from({ length: 128 }, (_, code) => code)
+  const program = c.program(function*() {
+    for (const code of codes) yield* c.let(`char_${code}`, c.literal(c.char, String.fromCharCode(code)), c.char)
+  })
+  const emitted = emitC(program)
+  assert.match(emitted, /char char_39 = '\\'';\nchar char_40 = '\(';/)
+  assert.match(emitted, /char char_10 = '\\n';/)
+  assert.match(emitted, /char char_0 = '\\000';/)
+  const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-char-"))
+  try {
+    const source = join(directory, "program.c")
+    const executable = join(directory, "program")
+    writeFileSync(source, `${emitted}\nint main(void) {\n  return ${codes.map((code) => `char_${code} == ${code}`).join(" && ")} ? 0 : 1;\n}\n`)
+    const compiled = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", executable], { encoding: "utf8" })
+    assert.ifError(compiled.error)
+    assert.equal(compiled.status, 0, compiled.stderr)
+    const executed = spawnSync(executable, [], { encoding: "utf8" })
+    assert.ifError(executed.error)
+    assert.equal(executed.status, 0, executed.stderr)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }

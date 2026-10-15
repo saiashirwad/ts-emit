@@ -18,4 +18,4 @@ There is no TypeScript target, static evidence model, symbolic type evaluator, o
 
 ## Scope
 
-C supports fixed-width integers, double, bool, pointers, bindings, arithmetic, comparisons, ternaries, conditions, loops, functions, and calls. Conditions accept only bool. It does not prove memory safety or total return coverage. New constructs should name their data shape and add source and runtime checks before expanding shared abstractions.
+C supports fixed-width integers, double, bool, ASCII char, pointers, bindings, arithmetic, comparisons, ternaries, conditions, loops, functions, and calls. Conditions accept only bool. It does not prove memory safety or total return coverage. New constructs should name their data shape and add source and runtime checks before expanding shared abstractions.

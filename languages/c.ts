@@ -75,7 +75,8 @@ export type Converted<A, B> =
 export interface CAssign extends TypeLambda {
   readonly type: this["Args"] extends readonly [infer A, infer B]
     ? [A, B] extends [boolean, boolean] ? true
-    : [A, B] extends [Arith, Arith] ? true : [A, B] extends [Ptr<infer X>, Ptr<infer Y>] ? Equal<X, Y> : false
+    : [A, B] extends [string, string] ? true : [A, B] extends [Arith, Arith] ? true : [A, B] extends [Ptr<infer X>, Ptr<infer Y>] ? Equal<X, Y>
+    : false
     : false
 }
 
@@ -112,7 +113,7 @@ export interface PointerTypeNode {
 }
 export interface LiteralNode {
   readonly kind: "literal"
-  readonly value: number | boolean
+  readonly value: number | boolean | string
   readonly type: TypeNode<C, unknown>
 }
 export interface UnaryNode {
@@ -130,6 +131,7 @@ export interface TernaryNode {
 const intTypeClass = typeClass<IntTypeNode>()
 const doubleTypeClass = typeClass()
 const boolTypeClass = typeClass()
+const charTypeClass = typeClass()
 const voidTypeClass = typeClass()
 const pointerTypeClass = typeClass<PointerTypeNode>({ children: (node) => [node.to] })
 const literalClass = exprClass<LiteralNode>()
@@ -181,17 +183,24 @@ export const c = {
   int: <B extends Bits>(bits: B): TypeNode<C, Int<B, true>, IntFacts> => typeNode(intTypeClass, { kind: "int-type", bits, signed: true }),
   uint: <B extends Bits>(bits: B): TypeNode<C, Int<B, false>, IntFacts> => typeNode(intTypeClass, { kind: "int-type", bits, signed: false }),
   double: typeNode<C, Double, { readonly kind: "double-type" }>(doubleTypeClass, { kind: "double-type" }),
+  char: typeNode<C, string, { readonly kind: "char-type" }>(charTypeClass, { kind: "char-type" }),
   bool: typeNode<C, boolean, { readonly kind: "bool-type" }>(boolTypeClass, { kind: "bool-type" }),
   void: typeNode<C, Void, { readonly kind: "void-type" }>(voidTypeClass, { kind: "void-type" }),
   ptr: <T, F extends Facts>(to: TypeNode<C, T, F>): TypeNode<C, Ptr<T>, { readonly kind: "pointer-type" } | F> =>
     typeNode(pointerTypeClass, { kind: "pointer-type", to }),
 
-  literal: <D extends Arith, F extends Facts>(type: TypeNode<C, D, F>, value: number): Expr<C, D, { readonly kind: "literal" } | F> => {
+  literal: <D extends Arith | string, F extends Facts>(
+    type: TypeNode<C, D, F>,
+    value: D extends string ? string : number,
+  ): Expr<C, D, { readonly kind: "literal" } | F> => {
+    if (type.kind === "char-type" && (typeof value !== "string" || value.length !== 1 || value.charCodeAt(0) > 127)) {
+      throw new Error(`char cannot hold the literal ${JSON.stringify(value)}`)
+    }
     if (type.kind === "int-type") {
       const node = fieldsOf<IntTypeNode>(type)
       const min = node.signed ? -(2 ** (node.bits - 1)) : 0
       const max = node.signed ? 2 ** (node.bits - 1) - 1 : 2 ** node.bits - 1
-      if (!Number.isSafeInteger(value) || value < min || value > max) {
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) {
         throw new Error(`${intName(node)} cannot hold the literal ${value} exactly`)
       }
     }
@@ -273,6 +282,13 @@ const ADD = 12
 const RELATIONAL = 10
 const CONDITIONAL = 3
 
+const CHAR_ESCAPES = new Map([["'", "\\'"], ["\\", "\\\\"], ["\n", "\\n"], ["\t", "\\t"], ["\r", "\\r"]])
+
+const charSpelling = (value: string): string => {
+  const code = value.charCodeAt(0)
+  return CHAR_ESCAPES.get(value) ?? (code < 32 || code === 127 ? `\\${code.toString(8).padStart(3, "0")}` : value)
+}
+
 const declaration = (type: TypeNode<C, unknown>, name: string, emit: Parameters<Handler>[1]): string => `${emit.node(type).text} ${name}`
 
 export const cTarget = defineTarget(
@@ -285,11 +301,13 @@ export const cTarget = defineTarget(
     "int-type": (node: IntTypeNode) => intName(node),
     "double-type": () => "double",
     "bool-type": () => "bool",
+    "char-type": () => "char",
     "void-type": () => "void",
     "pointer-type": (node: PointerTypeNode, emit) => `${emit.node(node.to).text}*`,
     literal: (node: LiteralNode): Fragment => {
       const { value } = node
       if (typeof value === "boolean") return frag(POSTFIX, String(value))
+      if (typeof value === "string") return frag(POSTFIX, `'${charSpelling(value)}'`)
       if (node.type.kind === "int-type") {
         const type = node.type as unknown as IntTypeNode
         if (type.bits === 32 && type.signed && value === -(2 ** 31)) return frag(POSTFIX, "INT32_MIN")
