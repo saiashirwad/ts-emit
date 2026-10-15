@@ -15,7 +15,11 @@ export interface Expr<T extends Denotation = Denotation> {
 export type Denotes<E> = E extends Expr<infer T> ? T : never
 
 export interface Binding<T extends Denotation = Denotation> extends Expr<T> {
-  readonly node: { readonly kind: "ref"; readonly id: symbol; readonly name: string }
+  readonly node: {
+    readonly kind: "ref"
+    readonly id: symbol
+    readonly name: string
+  }
 }
 
 export interface FunctionRef<F extends (...args: never) => Value = (...args: never) => Value> extends Binding<F> {
@@ -25,31 +29,71 @@ export interface FunctionRef<F extends (...args: never) => Value = (...args: nev
 }
 
 type ExprNode =
-  | { readonly kind: "literal"; readonly value: Value }
+  | {
+    readonly kind: "literal"
+    readonly value: Value
+  }
   | Binding["node"]
-  | { readonly kind: "add" | "less"; readonly left: Expr; readonly right: Expr }
-  | { readonly kind: "call"; readonly fn: FunctionRef; readonly args: readonly Expr[] }
+  | {
+    readonly kind: "add" | "less"
+    readonly left: Expr
+    readonly right: Expr
+  }
+  | {
+    readonly kind: "call"
+    readonly fn: FunctionRef
+    readonly args: readonly Expr[]
+  }
 
 export type Stmt =
-  | { readonly kind: "let"; readonly binding: Binding; readonly value: Expr }
-  | { readonly kind: "assign"; readonly binding: Binding; readonly value: Expr }
-  | { readonly kind: "run"; readonly value: Expr }
-  | { readonly kind: "return"; readonly value: Expr }
-  | { readonly kind: "while"; readonly condition: Expr; readonly body: readonly Stmt[] }
-  | { readonly kind: "if"; readonly condition: Expr; readonly body: readonly Stmt[]; readonly otherwise: readonly Stmt[] }
-  | { readonly kind: "function"; readonly binding: FunctionRef; readonly params: readonly Binding[]; readonly body: readonly Stmt[] }
+  | {
+    readonly kind: "let"
+    readonly binding: Binding
+    readonly value: Expr
+  }
+  | {
+    readonly kind: "assign"
+    readonly binding: Binding
+    readonly value: Expr
+  }
+  | {
+    readonly kind: "run"
+    readonly value: Expr
+  }
+  | {
+    readonly kind: "return"
+    readonly value: Expr
+  }
+  | {
+    readonly kind: "while"
+    readonly condition: Expr
+    readonly body: readonly Stmt[]
+  }
+  | {
+    readonly kind: "if"
+    readonly condition: Expr
+    readonly body: readonly Stmt[]
+    readonly otherwise: readonly Stmt[]
+  }
+  | {
+    readonly kind: "function"
+    readonly binding: FunctionRef
+    readonly params: readonly Binding[]
+    readonly body: readonly Stmt[]
+  }
 
 export interface Program {
   readonly body: readonly Stmt[]
 }
 
 type Body = () => Generator<Stmt, unknown, unknown>
-type Params<P extends readonly Binding[]> = { [K in keyof P]: P[K] }
 type Args<F> = F extends (...args: infer P extends readonly Value[]) => Value ? { [K in keyof P]: Expr<P[K]> } : never
 type Signature<P extends readonly Binding[], R extends Value> = (...args: { [K in keyof P]: Denotes<P[K]> }) => R
 
-const collect = (body: Body): Stmt[] => [...body()]
-const binding = <T extends Denotation>(name: string, type: LuaType): Binding<T> => ({ type, node: { kind: "ref", id: Symbol(name), name } })
+const binding = <T extends Denotation>(name: string, type: LuaType): Binding<T> => ({
+  type,
+  node: { kind: "ref", id: Symbol(name), name },
+})
 const statement = function*(node: Stmt): Generator<Stmt, void, unknown> {
   yield node
 }
@@ -60,7 +104,10 @@ function literal(value: boolean): Expr<boolean>
 function literal(value: null): Expr<null>
 function literal(value: Value): Expr {
   if (typeof value === "number" && !Number.isFinite(value)) throw new Error("Lua literals require finite numbers")
-  return { type: value === null ? "nil" : typeof value as "number" | "string" | "boolean", node: { kind: "literal", value } }
+  return {
+    type: value === null ? "nil" : typeof value as "number" | "string" | "boolean",
+    node: { kind: "literal", value },
+  }
 }
 
 const checkAssignment = (local: Binding, value: Expr): void => {
@@ -86,19 +133,19 @@ export const lua = {
   print,
   literal,
   param: <T extends Value>(name: string, type: Type<T>): Binding<T> => binding(name, type),
-  program: (body: Body): Program => ({ body: collect(body) }),
+  program: (body: Body): Program => ({ body: [...body()] }),
   *fn<const P extends readonly Binding<Value>[], R extends Value>(
     name: string,
     params: P,
     result: Type<R>,
-    body: (...params: Params<P>) => Generator<Stmt, unknown, unknown>,
+    body: (...params: P) => Generator<Stmt, unknown, unknown>,
   ): Generator<Stmt, FunctionRef<Signature<P, R>>, unknown> {
     const fn: FunctionRef<Signature<P, R>> = {
       ...binding<Signature<P, R>>(name, "function"),
       result,
       parameters: params.map((param) => param.type),
     }
-    yield { kind: "function", binding: fn, params, body: collect(() => body(...params)) }
+    yield { kind: "function", binding: fn, params, body: [...body(...params)] }
     return fn
   },
   *let<T extends Value>(name: string, value: Expr<T>, type: Type<T> = value.type as Type<T>): Generator<Stmt, Binding<T>, unknown> {
@@ -116,17 +163,23 @@ export const lua = {
     if (value.node.kind !== "call") throw new Error("Lua expression statements must be calls")
     return statement({ kind: "run", value })
   },
-  while: (condition: Expr<boolean>, body: Body): Generator<Stmt, void, unknown> => statement({ kind: "while", condition, body: collect(body) }),
+  while: (condition: Expr<boolean>, body: Body): Generator<Stmt, void, unknown> => statement({ kind: "while", condition, body: [...body()] }),
   if: (condition: Expr<boolean>, body: Body, otherwise: Body = function*() {}): Generator<Stmt, void, unknown> =>
-    statement({ kind: "if", condition, body: collect(body), otherwise: collect(otherwise) }),
+    statement({ kind: "if", condition, body: [...body()], otherwise: [...otherwise()] }),
   call: <F extends (...args: never) => Value>(fn: FunctionRef<F>, ...args: Args<F>): Expr<ReturnType<F>> => {
     if (!fn.builtin && (args.length !== fn.parameters.length || args.some((arg, index) => arg.type !== fn.parameters[index]))) {
       throw new Error("Lua call arguments do not match parameters")
     }
     return { type: fn.result, node: { kind: "call", fn, args } }
   },
-  add: (left: Expr<number>, right: Expr<number>): Expr<number> => ({ type: "number", node: { kind: "add", left, right } }),
-  less: (left: Expr<number>, right: Expr<number>): Expr<boolean> => ({ type: "boolean", node: { kind: "less", left, right } }),
+  add: (left: Expr<number>, right: Expr<number>): Expr<number> => ({
+    type: "number",
+    node: { kind: "add", left, right },
+  }),
+  less: (left: Expr<number>, right: Expr<number>): Expr<boolean> => ({
+    type: "boolean",
+    node: { kind: "less", left, right },
+  }),
 }
 
 const reserved = new Set("and break do else elseif end false for function goto if in local nil not or repeat return then true until while".split(" "))
@@ -225,10 +278,14 @@ export function emitLua(program: Program): string {
           break
         }
         case "while":
-        case "if":
-          line(`${stmt.kind} ${expression(stmt.condition, scope)} ${stmt.kind === "while" ? "do" : "then"}`)
+          line(`while ${expression(stmt.condition, scope)} do`)
           lines.push(...block(stmt.body, new Map(scope), depth + 1, result))
-          if (stmt.kind === "if" && stmt.otherwise.length) {
+          line("end")
+          break
+        case "if":
+          line(`if ${expression(stmt.condition, scope)} then`)
+          lines.push(...block(stmt.body, new Map(scope), depth + 1, result))
+          if (stmt.otherwise.length) {
             line("else")
             lines.push(...block(stmt.otherwise, new Map(scope), depth + 1, result))
           }

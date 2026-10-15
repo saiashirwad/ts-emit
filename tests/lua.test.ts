@@ -25,6 +25,62 @@ const sumProgram = lua.program(function*() {
   yield* lua.run(lua.call(lua.print, lua.call(sum, lua.literal(10))))
 })
 
+test("Lua eagerly collects programs, loops, and branches in order", () => {
+  const events: string[] = []
+  const loop = lua.while(lua.literal(false), function*() {
+    events.push("while")
+  })
+  assert.deepEqual(events, ["while"])
+  const branch = lua.if(lua.literal(false), function*() {
+    events.push("if")
+  }, function*() {
+    events.push("else")
+  })
+  assert.deepEqual(events, ["while", "if", "else"])
+  lua.program(function*() {
+    events.push("program")
+    yield* loop
+    yield* branch
+    events.push("done")
+  })
+  assert.deepEqual(events, ["while", "if", "else", "program", "done"])
+})
+
+test("Lua collects function bodies only when the generator advances", () => {
+  const events: string[] = []
+  const fn = lua.fn("lazy", [], lua.nil, function*() {
+    events.push("body")
+  })
+  assert.deepEqual(events, [])
+  const first = fn.next()
+  assert.equal(first.done, false)
+  assert.equal(first.value.kind, "function")
+  assert.deepEqual(events, ["body"])
+  assert.equal(fn.next().done, true)
+  assert.deepEqual(events, ["body"])
+})
+
+test("Lua validates run before its generator advances", () => {
+  assert.throws(() => lua.run(lua.literal(1)), {
+    message: "Lua expression statements must be calls",
+  })
+})
+
+test("Lua emits identical exact source on repeated emission", () => {
+  const expected = `local function sum(count)
+  local total = 0
+  local i = 0
+  while i < count do
+    total = total + i
+    i = i + 1
+  end
+  return total
+end
+print((sum(10)))`
+  assert.equal(emitLua(sumProgram), expected)
+  assert.equal(emitLua(sumProgram), expected)
+})
+
 test("Lua executes a sum loop", { skip: runtime ? false : "Lua runtime not installed" }, () => {
   assert.equal(run(emitLua(sumProgram)), "45\n")
 })
