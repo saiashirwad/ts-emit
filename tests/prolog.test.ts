@@ -12,19 +12,23 @@ const a = prolog.atom
 const call = prolog.call
 
 test("facts emit atoms, compounds, numbers, and proper and improper lists", () => {
-  const clauses = prolog.program(
-    prolog.fact(call("values", a("alice"), a("Alice Smith"), a(""), a("don't\\\n\u0000"))),
-    prolog.fact(call("data", prolog.compound("+", prolog.number(-2), prolog.number(1.5)), prolog.list([a("a"), a("b")]))),
-    prolog.clause(({ variable }) => ({ head: call("cons", prolog.list([variable("Head")], variable("Tail"))) })),
-    prolog.fact(call("empty", prolog.list([]), prolog.compound("zero"))),
-    prolog.fact(call("ready")),
-  )
+  const clauses = prolog.program(function*() {
+    yield* prolog.facts("values", [[a("alice"), a("Alice Smith"), a(""), a("don't\\\n\u0000")]])
+    yield* prolog.facts("data", [[prolog.compound("+", prolog.number(-2), prolog.number(1.5)), prolog.list([a("a"), a("b")])]])
+    yield* prolog.rule("cons", ["List"], function*(list) {
+      const head = yield* prolog.variable("Head")
+      const tail = yield* prolog.variable("Tail")
+      yield* prolog.unify(list, prolog.list([head], tail))
+    })
+    yield* prolog.facts("empty", [[prolog.list([]), prolog.compound("zero")]])
+    yield* prolog.facts("ready", [[]])
+  })
   assert.equal(
     emitProlog(clauses),
     [
       "values(alice, 'Alice Smith', '', 'don\\'t\\\\\\xa\\\\x0\\').",
       "data('+'(-2, 1.5), [a, b]).",
-      "cons([Head | Tail]).",
+      "cons(List) :- List = [Head | Tail].",
       "empty([], zero).",
       "ready.",
     ].join("\n"),
@@ -35,56 +39,153 @@ test("facts emit atoms, compounds, numbers, and proper and improper lists", () =
 test("Prolog rejects lone surrogates in atom, compound, and predicate names", () => {
   for (const name of ["\ud800", "\udfff", "a\ud800b", "a\udfffb"]) {
     for (
-      const clause of [
-        prolog.fact(call("value", a(name))),
-        prolog.fact(call("value", prolog.compound(name, a("x")))),
-        prolog.fact(call(name)),
-        prolog.rule(() => ({ head: call("value"), body: call(name) })),
+      const clauses of [
+        () =>
+          prolog.program(function*() {
+            yield* prolog.facts("value", [[a(name)]])
+          }),
+        () =>
+          prolog.program(function*() {
+            yield* prolog.facts("value", [[prolog.compound(name, a("x"))]])
+          }),
+        () =>
+          prolog.program(function*() {
+            yield* prolog.facts(name, [[]])
+          }),
+        () =>
+          prolog.program(function*() {
+            yield* prolog.rule("value", [], function*() {
+              yield* call(name)
+            })
+          }),
       ]
     ) {
-      assert.throws(() => emitProlog([clause]), /lone surrogate/)
+      assert.throws(() => emitProlog(clauses()), /lone surrogate/)
     }
   }
 })
 
-test("Prolog preserves Unicode pairs in atom, compound, and predicate names", () => {
+test("goal precedence preserves conjunctions containing disjunctions", () => {
+  const clauses = prolog.program(function*() {
+    yield* prolog.rule("choose", ["X"], function*(x) {
+      yield* prolog.or(function*() {
+        yield* prolog.unify(x, a("a"))
+      }, function*() {
+        yield* prolog.unify(x, a("b"))
+      })
+      yield* prolog.or(function*() {
+        yield* call("left", x)
+      }, function*() {
+        yield* call("middle", x)
+        yield* call("right", x)
+      })
+    })
+  })
+  assert.equal(emitProlog(clauses), "choose(X) :- (X = a; X = b), (left(X); middle(X), right(X)).")
+})
+
+test("rules add clauses through handles, and bodies run after the program so they can call later predicates", () => {
+  const clauses = prolog.program(function*() {
+    const even = yield* prolog.rule("even", ["N"], function*(n) {
+      yield* prolog.unify(n, a("zero"))
+    })
+    yield* prolog.rule(even, ["N"], function*(n) {
+      const m = yield* prolog.variable("M")
+      yield* prolog.unify(n, prolog.compound("s", m))
+      yield* odd(m)
+    })
+    const odd = yield* prolog.rule("odd", ["N"], function*(n) {
+      const m = yield* prolog.variable("M")
+      yield* prolog.unify(n, prolog.compound("s", m))
+      yield* even(m)
+    })
+  })
   assert.equal(
-    emitProlog([prolog.fact(call("😀", a("😀"), prolog.compound("😀", a("x"))))]),
-    "'😀'('😀', '😀'(x)).",
+    emitProlog(clauses),
+    [
+      "even(N) :- N = zero.",
+      "even(N) :- N = s(M), odd(M).",
+      "odd(N) :- N = s(M), even(M).",
+    ].join("\n"),
   )
 })
 
-test("goal precedence preserves conjunctions containing disjunctions", () => {
-  const clause = prolog.rule(({ variable }) => {
-    const x = variable("X")
-    return {
-      head: call("choose", x),
-      body: prolog.and(
-        prolog.or(prolog.unify(x, a("a")), prolog.unify(x, a("b"))),
-        prolog.or(call("left", x), prolog.and(call("middle", x), call("right", x))),
-      ),
-    }
-  })
-  assert.equal(emitProlog([clause]), "choose(X) :- (X = a; X = b), (left(X); middle(X), right(X)).")
+test("predicate handles check arity", () => {
+  assert.throws(() =>
+    prolog.program(function*() {
+      const parent = yield* prolog.facts("parent", [[a("alice"), a("bob")]])
+      yield* prolog.rule("lonely", ["X"], function*(x) {
+        // @ts-expect-error parent takes two arguments
+        yield* parent(x)
+      })
+    }), /parent\/2 has 1 arguments/)
+  assert.throws(() =>
+    prolog.program(function*() {
+      const parent = yield* prolog.facts("parent", [[a("alice"), a("bob")]])
+      // @ts-expect-error parent takes two parameters
+      yield* prolog.rule(parent, ["X"], function*() {})
+    }), /parent\/2 has 1 parameters/)
+  assert.throws(() =>
+    prolog.program(function*() {
+      yield* prolog.facts("parent", [[a("alice"), a("bob")], [a("bob")]])
+    }), /parent\/2 have a row with 1 arguments/)
 })
 
-test("variables are clause-scoped, repeated names share identity, and anonymous occurrences stay fresh", () => {
+test("variables are clause-scoped, names are unique per clause, and anonymous occurrences stay fresh", () => {
   let escaped: Term = prolog.anonymous()
-  const clause = prolog.clause(({ variable }) => {
-    escaped = variable("X")
-    assert.equal(variable("X"), escaped)
-    const anonymous = prolog.anonymous()
-    return { head: call("same", escaped, escaped, anonymous, anonymous) }
+  const clauses = prolog.program(function*() {
+    yield* prolog.rule("same", ["X", "Y"], function*(x, y) {
+      escaped = x
+      yield* prolog.unify(x, y)
+    })
+    yield* prolog.facts("fresh", [[prolog.anonymous(), prolog.anonymous()]])
   })
-  assert.equal(emitProlog([clause]), "same(X, X, _, _).")
-  assert.throws(() => prolog.fact(call("bad", escaped)), /another clause/)
+  assert.equal(emitProlog(clauses), "same(X, Y) :- X = Y.\nfresh(_, _).")
+  assert.throws(() =>
+    prolog.program(function*() {
+      yield* prolog.facts("bad", [[escaped]])
+    }), /another clause/)
   assert.throws(
-    () => prolog.rule(() => ({ head: call("bad"), body: call("nested", prolog.list([prolog.compound("f", escaped)])) })),
+    () =>
+      prolog.program(function*() {
+        yield* prolog.rule("bad", [], function*() {
+          yield* call("nested", prolog.list([prolog.compound("f", escaped)]))
+        })
+      }),
     /another clause/,
   )
-  assert.doesNotThrow(() => prolog.clause(({ variable }) => ({ head: call("other", variable("X")) })))
+  assert.doesNotThrow(() =>
+    prolog.program(function*() {
+      yield* prolog.rule("other", ["X"], function*() {})
+    })
+  )
+  assert.throws(() =>
+    prolog.program(function*() {
+      yield* prolog.rule("bad", ["X", "X"], function*() {})
+    }), /share the name X/)
+  assert.throws(
+    () =>
+      prolog.program(function*() {
+        yield* prolog.rule("bad", ["X"], function*() {
+          yield* prolog.variable("X")
+        })
+      }),
+    /share the name X/,
+  )
   for (const name of ["x", "_", "X Y", "X). injected(", ""]) {
-    assert.throws(() => prolog.clause(({ variable }) => ({ head: call("bad", variable(name)) })), /Invalid variable name/)
+    assert.throws(() =>
+      prolog.program(function*() {
+        yield* prolog.rule("bad", [name], function*() {})
+      }), /Invalid variable name/)
+    assert.throws(
+      () =>
+        prolog.program(function*() {
+          yield* prolog.rule("bad", [], function*() {
+            yield* prolog.variable(name)
+          })
+        }),
+      /Invalid variable name/,
+    )
   }
 })
 
@@ -93,18 +194,6 @@ test("unsupported numeric values and empty list tails fail explicitly", () => {
     assert.throws(() => prolog.number(value), /finite.*safe integers/)
   }
   assert.throws(() => prolog.list([], a("tail")), /at least one item/)
-})
-
-test("family example emits recursive rules", () => {
-  assert.equal(
-    emitProlog(family),
-    [
-      "parent(alice, bob).",
-      "parent(bob, carol).",
-      "ancestor(X, Y) :- parent(X, Y).",
-      "ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).",
-    ].join("\n"),
-  )
 })
 
 const runtime = spawnSync("swipl", ["--version"], { encoding: "utf8" })
@@ -118,16 +207,40 @@ test("SWI-Prolog executes recursion, unification, lists, escaping, and goal prec
     const source = join(directory, "family.pl")
     const clauses = [
       ...family,
-      prolog.clause(({ variable }) => ({ head: call("same", variable("X"), variable("X")) })),
-      prolog.fact(call("fresh", prolog.anonymous(), prolog.anonymous())),
-      prolog.clause(({ variable }) => ({ head: call("first", prolog.list([variable("Head")], variable("Tail")), variable("Head")) })),
-      prolog.fact(call("escaped", a("don't\\\n\u0000"))),
-      prolog.fact(call("data", prolog.compound("+", prolog.number(-2), prolog.number(1.5)), prolog.number(1e-7))),
-      prolog.fact(call("quoted", a("a). injected. %"), a("雪"), a(""))),
-      prolog.fact(call("😀", a("😀"), prolog.compound("😀", a("x")))),
-      prolog.rule(({ variable }) => {
-        const x = variable("X")
-        return { head: call("choose", x), body: prolog.and(prolog.or(prolog.unify(x, a("a")), prolog.unify(x, a("b"))), prolog.unify(x, a("b"))) }
+      ...prolog.program(function*() {
+        yield* prolog.rule("same", ["X", "Y"], function*(x, y) {
+          yield* prolog.unify(x, y)
+        })
+        yield* prolog.facts("fresh", [[prolog.anonymous(), prolog.anonymous()]])
+        yield* prolog.rule("first", ["List", "Head"], function*(list, head) {
+          const tail = yield* prolog.variable("Tail")
+          yield* prolog.unify(list, prolog.list([head], tail))
+        })
+        yield* prolog.facts("escaped", [[a("don't\\\n\u0000")]])
+        yield* prolog.facts("data", [[prolog.compound("+", prolog.number(-2), prolog.number(1.5)), prolog.number(1e-7)]])
+        yield* prolog.facts("quoted", [[a("a). injected. %"), a("雪"), a("")]])
+        yield* prolog.facts("😀", [[a("😀"), prolog.compound("😀", a("x"))]])
+        yield* prolog.rule("choose", ["X"], function*(x) {
+          yield* prolog.or(function*() {
+            yield* prolog.unify(x, a("a"))
+          }, function*() {
+            yield* prolog.unify(x, a("b"))
+          })
+          yield* prolog.unify(x, a("b"))
+        })
+        const even = yield* prolog.rule("even", ["N"], function*(n) {
+          yield* prolog.unify(n, a("zero"))
+        })
+        yield* prolog.rule(even, ["N"], function*(n) {
+          const m = yield* prolog.variable("M")
+          yield* prolog.unify(n, prolog.compound("s", m))
+          yield* odd(m)
+        })
+        const odd = yield* prolog.rule("odd", ["N"], function*(n) {
+          const m = yield* prolog.variable("M")
+          yield* prolog.unify(n, prolog.compound("s", m))
+          yield* even(m)
+        })
       }),
     ]
     writeFileSync(source, emitProlog(clauses))
@@ -138,6 +251,8 @@ test("SWI-Prolog executes recursion, unification, lists, escaping, and goal prec
       "fresh(a, b)",
       "first([a, b], a)",
       "findall(X, choose(X), [b])",
+      "even(s(s(zero)))",
+      "\\+ odd(s(s(zero)))",
       "escaped(E), atom_codes(E, [100,111,110,39,116,92,10,0])",
       "data('+'(-2, 1.5), 1e-7)",
       "quoted('a). injected. %', '雪', '')",

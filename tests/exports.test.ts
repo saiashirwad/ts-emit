@@ -21,5 +21,10 @@ test("package entrypoints emit C, Lua, and Prolog", () => {
     })),
     "print(42)",
   )
-  assert.equal(emitProlog(prolog.program(prolog.fact(prolog.call("ready")))), "ready.")
+  assert.equal(
+    emitProlog(prolog.program(function*() {
+      yield* prolog.facts("ready", [[]])
+    })),
+    "ready.",
+  )
 })

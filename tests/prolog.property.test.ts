@@ -7,7 +7,7 @@ import { test } from "node:test"
 
 import fc from "fast-check"
 
-import { type Clause, emitProlog, prolog, type Term } from "../languages/prolog.ts"
+import { emitProlog, prolog, type Term } from "../languages/prolog.ts"
 
 const parameters: fc.Parameters<unknown> = {
   numRuns: 30,
@@ -33,49 +33,48 @@ const atom = (values: readonly number[]) => prolog.atom(String.fromCodePoint(...
 test("generated Prolog batches preserve Unicode atoms, lists, unification, and goal precedence", () => {
   fc.assert(
     fc.property(fc.array(sample, { minLength: 1, maxLength: 5 }), (batch) => {
-      const clauses: Clause[] = []
       const checks: string[] = []
-      batch.forEach((data, index) => {
-        const name = `case_${index}`
-        clauses.push(prolog.fact(prolog.call(`${name}_atom`, atom(data.atom))))
-        checks.push(`${name}_atom(A${index}), atom_codes(A${index}, ${numericList(data.atom)})`)
-        clauses.push(prolog.rule(({ variable }) => {
-          const head = variable("Head")
-          const tail = variable("Tail")
-          return {
-            head: prolog.call(`${name}_list`, head, tail),
-            body: prolog.unify(
-              prolog.list([head], tail),
-              prolog.list(data.items.map(atom)),
-            ),
-          }
-        }))
-        const [first, ...rest] = data.items
-        checks.push(
-          `${name}_list(H${index}, T${index}), atom_codes(H${index}, ${numericList(first!)}), maplist(atom_codes, T${index}, [${
-            rest.map(numericList).join(",")
-          }])`,
-        )
-        clauses.push(prolog.fact(prolog.call(`${name}_improper`, prolog.list(data.items.map(atom), atom(data.tail)))))
-        const variables = data.items.map((_, item) => `I${index}_${item}`)
-        checks.push(`${name}_improper([${variables.join(",")}|Z${index}])`)
-        data.items.forEach((item, itemIndex) => checks.push(`atom_codes(${variables[itemIndex]}, ${numericList(item)})`))
-        checks.push(`atom_codes(Z${index}, ${numericList(data.tail)})`)
-        clauses.push(prolog.rule(({ variable }) => {
-          const x = variable("X")
-          return {
-            head: prolog.call(`${name}_choose`, x),
-            body: prolog.and(
-              prolog.or(prolog.unify(x, prolog.number(data.value)), prolog.unify(x, prolog.number(data.value + 1))),
-              prolog.or(
-                prolog.unify(x, prolog.number(data.value + 1)),
-                prolog.and(prolog.unify(x, prolog.number(data.value)), prolog.call(data.includeFirst ? "true" : "fail")),
-              ),
-            ),
-          }
-        }))
-        const expected = data.includeFirst ? [data.value, data.value + 1] : [data.value + 1]
-        checks.push(`findall(X, ${name}_choose(X), ${numericList(expected)})`)
+      const clauses = prolog.program(function*() {
+        for (const [index, data] of batch.entries()) {
+          const name = `case_${index}`
+          yield* prolog.facts(`${name}_atom`, [[atom(data.atom)]])
+          checks.push(`${name}_atom(A${index}), atom_codes(A${index}, ${numericList(data.atom)})`)
+          yield* prolog.rule(`${name}_list`, ["Head", "Tail"], function*(head, tail) {
+            yield* prolog.unify(prolog.list([head], tail), prolog.list(data.items.map(atom)))
+          })
+          const [first, ...rest] = data.items
+          checks.push(
+            `${name}_list(H${index}, T${index}), atom_codes(H${index}, ${numericList(first!)}), maplist(atom_codes, T${index}, [${
+              rest.map(numericList).join(",")
+            }])`,
+          )
+          yield* prolog.facts(`${name}_improper`, [[prolog.list(data.items.map(atom), atom(data.tail))]])
+          const variables = data.items.map((_, item) => `I${index}_${item}`)
+          checks.push(`${name}_improper([${variables.join(",")}|Z${index}])`)
+          data.items.forEach((item, itemIndex) => checks.push(`atom_codes(${variables[itemIndex]}, ${numericList(item)})`))
+          checks.push(`atom_codes(Z${index}, ${numericList(data.tail)})`)
+          yield* prolog.rule(`${name}_choose`, ["X"], function*(x) {
+            yield* prolog.or(
+              function*() {
+                yield* prolog.unify(x, prolog.number(data.value))
+              },
+              function*() {
+                yield* prolog.unify(x, prolog.number(data.value + 1))
+              },
+            )
+            yield* prolog.or(
+              function*() {
+                yield* prolog.unify(x, prolog.number(data.value + 1))
+              },
+              function*() {
+                yield* prolog.unify(x, prolog.number(data.value))
+                yield* prolog.call(data.includeFirst ? "true" : "fail")
+              },
+            )
+          })
+          const expected = data.includeFirst ? [data.value, data.value + 1] : [data.value + 1]
+          checks.push(`findall(X, ${name}_choose(X), ${numericList(expected)})`)
+        }
       })
       const directory = mkdtempSync(join(tmpdir(), "ts-emit-prolog-property-"))
       try {
@@ -102,17 +101,22 @@ test("generated clause variables cannot escape through nested lists and compound
   fc.assert(
     fc.property(fc.integer({ min: 0, max: 1000 }), fc.integer({ min: 0, max: 3 }), (suffix, depth) => {
       let escaped: Term = prolog.anonymous()
-      const owner = prolog.clause(({ variable }) => {
-        escaped = variable(`X${suffix}`)
-        assert.equal(variable(`X${suffix}`), escaped)
-        return { head: prolog.call("owner", escaped) }
+      const owner = prolog.program(function*() {
+        yield* prolog.rule("owner", [`X${suffix}`], function*(x) {
+          escaped = x
+        })
       })
       let nested = escaped
       for (let index = 0; index < depth; index++) nested = prolog.compound("nested", prolog.list([nested]))
-      assert.throws(() => prolog.clause(() => ({ head: prolog.call("other", nested) })), /another clause/)
-      const other = prolog.clause(({ variable }) => ({ head: prolog.call("other", variable(`X${suffix}`)) }))
-      assert.doesNotThrow(() => emitProlog([owner, other]))
-      assert.throws(() => emitProlog([{ ...other, body: prolog.unify(nested, prolog.anonymous()) }]), /another clause/)
+      assert.throws(() =>
+        prolog.program(function*() {
+          yield* prolog.facts("other", [[nested]])
+        }), /another clause/)
+      const other = prolog.program(function*() {
+        yield* prolog.rule("other", [`X${suffix}`], function*() {})
+      })
+      assert.doesNotThrow(() => emitProlog([...owner, ...other]))
+      assert.throws(() => emitProlog([{ ...other[0]!, body: { kind: "unify", left: nested, right: prolog.anonymous() } }]), /another clause/)
     }),
     parameters,
   )
