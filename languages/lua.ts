@@ -125,7 +125,7 @@ const quote = (value: string): string => {
 }
 
 export function emitLua(program: Program): string {
-  const used = new Set(["print"])
+  const used = new Set(["print", "_ENV"])
   type Scope = Map<symbol, string>
   const declare = (local: Binding, scope: Scope): string => {
     if (scope.has(local.node.id)) throw new Error(`Lua binding already declared: ${local.node.name}`)
@@ -157,7 +157,11 @@ export function emitLua(program: Program): string {
         return reference({ type: expr.type, node }, scope)
       case "call": {
         const name = node.fn === print ? "print" : reference(node.fn, scope)
-        return `${name}(${node.args.map((arg) => expression(arg, scope)).join(", ")})`
+        const args = node.args.map((arg, index) => {
+          const text = expression(arg, scope)
+          return arg.node.kind === "call" && index === node.args.length - 1 ? `(${text})` : text
+        })
+        return `${name}(${args.join(", ")})`
       }
       case "add":
       case "less": {

@@ -219,7 +219,8 @@ export const c = {
 
 const KEYWORDS = (
   "auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return "
-  + "short signed sizeof static struct switch typedef union unsigned void volatile while _Bool _Complex _Imaginary"
+  + "short signed sizeof static struct switch typedef union unsigned void volatile while _Bool _Complex _Imaginary "
+  + "_Alignas _Alignof _Atomic _Generic _Noreturn _Static_assert _Thread_local"
 ).split(" ")
 
 const STDINT = [
@@ -242,7 +243,11 @@ const RELATIONAL = 10
 const declaration = (type: TypeNode<C, unknown>, name: string, emit: Parameters<Handler>[1]): string => `${emit.node(type).text} ${name}`
 
 export const cTarget = defineTarget(
-  { valid: (name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name), reserved: new Set([...KEYWORDS, ...STDINT]) },
+  {
+    valid: (name) => /^[A-Za-z_]/.test(name) && !/[^A-Za-z0-9_]/.test(name),
+    reserved: new Set([...KEYWORDS, ...STDINT]),
+    spell: (name) => name.startsWith("_") ? `binding${name}` : name,
+  },
   {
     "int-type": (node: IntTypeNode) => intName(node),
     "double-type": () => "double",

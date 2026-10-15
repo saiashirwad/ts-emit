@@ -38,7 +38,7 @@ test("Lua emits a sum loop and a print call", () => {
       "  end",
       "  return total",
       "end",
-      "print(sum(10))",
+      "print((sum(10)))",
     ].join("\n"),
   )
 })
@@ -67,6 +67,20 @@ test("Lua preserves binding identity, captures, and sanitizes names", () => {
   assert.match(source, /local _end_2 = _end/)
   assert.match(source, /local print_2 = 1/)
   if (runtime) assert.equal(run(source), "8\n")
+})
+
+test("Lua preserves builtin lookup with locals and parameters named _ENV", () => {
+  const source = emitLua(lua.program(function*() {
+    yield* lua.let("_ENV", lua.literal(1))
+    const fn = yield* lua.fn("show", [lua.param("_ENV", lua.number)], lua.nil, function*(value) {
+      yield* lua.run(lua.call(lua.print, value))
+    })
+    yield* lua.run(lua.call(lua.print, lua.literal("ok")))
+    yield* lua.run(lua.call(fn, lua.literal(2)))
+  }))
+  assert.match(source, /local _ENV_2 = 1/)
+  assert.match(source, /local function show\(_ENV_3\)/)
+  if (runtime) assert.equal(run(source), "ok\n2\n")
 })
 
 test("Lua rejects escaped branch bindings and undeclared parameters", () => {
@@ -179,6 +193,22 @@ test("Lua rejects non-nil functions that may fall through", () => {
         })
       })
     })), /non-nil function may fall through/)
+})
+
+test("Lua call arguments preserve one nil value and standalone calls remain valid", () => {
+  const source = emitLua(lua.program(function*() {
+    const empty = yield* lua.fn("empty", [], lua.nil, function*() {})
+    const show = yield* lua.fn("show", [lua.param("value", lua.nil)], lua.nil, function*(value) {
+      yield* lua.run(lua.call(lua.print, value))
+    })
+    yield* lua.run(lua.call(empty))
+    yield* lua.run(lua.call(lua.print, lua.call(empty)))
+    yield* lua.run(lua.call(lua.print, lua.call(lua.print, lua.literal("x"))))
+    yield* lua.run(lua.call(show, lua.call(empty)))
+  }))
+  if (runtime) assert.equal(run(source), "nil\nx\nnil\nnil\n")
+  assert.match(source, /\nempty\(\)\n/)
+  assert.match(source, /print\(\(empty\(\)\)\)/)
 })
 
 test("Lua accepts returns in both branches and nil fallthrough", () => {

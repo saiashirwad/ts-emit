@@ -167,6 +167,61 @@ int32_t main(void) {
   )
 })
 
+test("C spells leading underscores safely and preserves collisions and references", () => {
+  const program = c.program(function*() {
+    const first = yield* c.let("_value", i32(1), c.int(32))
+    const second = yield* c.let("binding_value", i32(2), c.int(32))
+    yield* c.let("_", i32(3), c.int(32))
+    yield* c.let("first", c.address(first), c.ptr(c.int(32)))
+    yield* c.let("second", c.address(second), c.ptr(c.int(32)))
+  })
+  assert.equal(
+    emitC(program),
+    "#include <stdint.h>\n\nint32_t binding_value = 1;\nint32_t binding_value_2 = 2;\nint32_t binding_ = 3;\nint32_t* first = &binding_value;\nint32_t* second = &binding_value_2;\n",
+  )
+  for (const hint of ["_bad-name", "_\n", "_\r", "_\u2028", "_\u2029", "bad-name", "1value", ""]) {
+    assert.throws(() =>
+      emitC(c.program(function*() {
+        yield* c.let(hint, i32(1), c.int(32))
+      })), /invalid identifier/)
+  }
+})
+
+test("C compiles C11 keywords and reserved underscore names in every binding position", () => {
+  const names = ["_Alignas", "_Alignof", "_Atomic", "_Generic", "_Noreturn", "_Static_assert", "_Thread_local", "__LINE__", "__FILE__", "_value"]
+  for (const name of names.slice(0, 7)) assert.equal(cTarget.naming.reserved.has(name), true)
+  const program = c.program(function*() {
+    for (const name of names) {
+      const global = yield* c.let(name, i32(1), c.int(32))
+      yield* c.fn(name, [c.param(name, c.int(32))], c.int(32), function*(parameter) {
+        const local = yield* c.let(name, c.add(global, parameter), c.int(32))
+        yield* c.return(local)
+      })
+    }
+    yield* c.fn("main", [], c.int(32), function*() {
+      yield* c.return(i32(0))
+    })
+  })
+  const text = emitC(program)
+  for (const name of names) {
+    assert.ok(text.includes(`int32_t binding${name} = 1;`))
+    assert.ok(text.includes(`int32_t binding${name}_2(int32_t binding${name}_3)`))
+    assert.ok(text.includes(`int32_t binding${name}_4 = binding${name} + binding${name}_3;`))
+    assert.ok(text.includes(`return binding${name}_4;`))
+  }
+  const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-"))
+  try {
+    const source = join(directory, "program.c")
+    const executable = join(directory, "program")
+    writeFileSync(source, text)
+    const compiled = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", executable], { encoding: "utf8" })
+    assert.ifError(compiled.error)
+    assert.equal(compiled.status, 0, compiled.stderr)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test("C literals are spelled with their declared type, and must fit it", () => {
   const program = c.program(function*() {
     yield* c.let("int32_t", c.less(u32(1), i32(-1)), c.int(32))

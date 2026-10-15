@@ -136,6 +136,7 @@ function atom(name: string): string {
   const escaped = Array.from(name, (character) => {
     if (character === "'" || character === "\\") return `\\${character}`
     const code = character.codePointAt(0)!
+    if (code >= 0xd800 && code <= 0xdfff) throw new Error("Prolog atoms cannot contain a lone surrogate")
     return code < 32 || code === 127 ? `\\x${code.toString(16)}\\` : character
   }).join("")
   return `'${escaped}'`

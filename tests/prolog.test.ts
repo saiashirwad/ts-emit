@@ -32,6 +32,28 @@ test("facts emit atoms, compounds, numbers, and proper and improper lists", () =
   assert.equal(emitProlog([]), "")
 })
 
+test("Prolog rejects lone surrogates in atom, compound, and predicate names", () => {
+  for (const name of ["\ud800", "\udfff", "a\ud800b", "a\udfffb"]) {
+    for (
+      const clause of [
+        prolog.fact(call("value", a(name))),
+        prolog.fact(call("value", prolog.compound(name, a("x")))),
+        prolog.fact(call(name)),
+        prolog.rule(() => ({ head: call("value"), body: call(name) })),
+      ]
+    ) {
+      assert.throws(() => emitProlog([clause]), /lone surrogate/)
+    }
+  }
+})
+
+test("Prolog preserves Unicode pairs in atom, compound, and predicate names", () => {
+  assert.equal(
+    emitProlog([prolog.fact(call("😀", a("😀"), prolog.compound("😀", a("x"))))]),
+    "'😀'('😀', '😀'(x)).",
+  )
+})
+
 test("goal precedence preserves conjunctions containing disjunctions", () => {
   const clause = prolog.rule(({ variable }) => {
     const x = variable("X")
@@ -102,6 +124,7 @@ test("SWI-Prolog executes recursion, unification, lists, escaping, and goal prec
       prolog.fact(call("escaped", a("don't\\\n\u0000"))),
       prolog.fact(call("data", prolog.compound("+", prolog.number(-2), prolog.number(1.5)), prolog.number(1e-7))),
       prolog.fact(call("quoted", a("a). injected. %"), a("雪"), a(""))),
+      prolog.fact(call("😀", a("😀"), prolog.compound("😀", a("x")))),
       prolog.rule(({ variable }) => {
         const x = variable("X")
         return { head: call("choose", x), body: prolog.and(prolog.or(prolog.unify(x, a("a")), prolog.unify(x, a("b"))), prolog.unify(x, a("b"))) }
@@ -118,6 +141,7 @@ test("SWI-Prolog executes recursion, unification, lists, escaping, and goal prec
       "escaped(E), atom_codes(E, [100,111,110,39,116,92,10,0])",
       "data('+'(-2, 1.5), 1e-7)",
       "quoted('a). injected. %', '雪', '')",
+      "'😀'(A, '😀'(x)), atom_codes(A, [128512])",
       "write(ok)",
     ].join(", ")
     const result = spawnSync("swipl", ["-q", "-s", source, "-g", query, "-t", "halt"], { encoding: "utf8" })
