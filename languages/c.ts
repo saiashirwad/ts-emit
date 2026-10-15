@@ -31,6 +31,10 @@ import {
 } from "../src/index.ts"
 import type { AssignNode, BinaryNode, CallNode, ExpressionNode, FunctionNode, IfNode, LetNode, RefNode, ReturnNode, WhileNode } from "../src/index.ts"
 
+declare const CType: unique symbol
+
+export type Char = string & { readonly [CType]: "char" }
+
 export type Bits = 8 | 16 | 32 | 64
 
 export interface Int<B extends Bits = Bits, Signed extends boolean = boolean> {
@@ -75,7 +79,7 @@ export type Converted<A, B> =
 export interface CAssign extends TypeLambda {
   readonly type: this["Args"] extends readonly [infer A, infer B]
     ? [A, B] extends [boolean, boolean] ? true
-    : [A, B] extends [string, string] ? true : [A, B] extends [Arith, Arith] ? true : [A, B] extends [Ptr<infer X>, Ptr<infer Y>] ? Equal<X, Y>
+    : [A, B] extends [Char, Char] ? true : [A, B] extends [Arith, Arith] ? true : [A, B] extends [Ptr<infer X>, Ptr<infer Y>] ? Equal<X, Y>
     : false
     : false
 }
@@ -183,15 +187,15 @@ export const c = {
   int: <B extends Bits>(bits: B): TypeNode<C, Int<B, true>, IntFacts> => typeNode(intTypeClass, { kind: "int-type", bits, signed: true }),
   uint: <B extends Bits>(bits: B): TypeNode<C, Int<B, false>, IntFacts> => typeNode(intTypeClass, { kind: "int-type", bits, signed: false }),
   double: typeNode<C, Double, { readonly kind: "double-type" }>(doubleTypeClass, { kind: "double-type" }),
-  char: typeNode<C, string, { readonly kind: "char-type" }>(charTypeClass, { kind: "char-type" }),
+  char: typeNode<C, Char, { readonly kind: "char-type" }>(charTypeClass, { kind: "char-type" }),
   bool: typeNode<C, boolean, { readonly kind: "bool-type" }>(boolTypeClass, { kind: "bool-type" }),
   void: typeNode<C, Void, { readonly kind: "void-type" }>(voidTypeClass, { kind: "void-type" }),
   ptr: <T, F extends Facts>(to: TypeNode<C, T, F>): TypeNode<C, Ptr<T>, { readonly kind: "pointer-type" } | F> =>
     typeNode(pointerTypeClass, { kind: "pointer-type", to }),
 
-  literal: <D extends Arith | string, F extends Facts>(
+  literal: <D extends Arith | Char, F extends Facts>(
     type: TypeNode<C, D, F>,
-    value: D extends string ? string : number,
+    value: D extends Char ? string : number,
   ): Expr<C, D, { readonly kind: "literal" } | F> => {
     if (type.kind === "char-type" && (typeof value !== "string" || value.length !== 1 || value.charCodeAt(0) > 127)) {
       throw new Error(`char cannot hold the literal ${JSON.stringify(value)}`)

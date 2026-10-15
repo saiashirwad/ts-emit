@@ -5,8 +5,8 @@ import { join, resolve } from "node:path"
 
 const directory = mkdtempSync(resolve(".type-contracts-"))
 const file = join(directory, "contract.ts")
-const prefix = `import { c, type C, type Int } from "../languages/c.ts"
-import type { Ref } from "../src/index.ts"
+const prefix = `import { c, type C, type Char, type Int } from "../languages/c.ts"
+import type { Expr, Ref } from "../src/index.ts"
 declare const n: Ref<C, Int<32, true>>
 const p = c.address(n)
 `
@@ -19,6 +19,12 @@ const cases = [
   { name: "assignment through a pointer", valid: "c.assign(c.deref(p), n)", invalid: "c.assign(p, n)" },
   { name: "bool assignment", valid: "c.let(\"b\", c.less(n, n), c.bool)", invalid: "c.let(\"b\", c.less(n, n), c.int(32))" },
   { name: "char assignment", valid: "c.let(\"ch\", c.literal(c.char, \"a\"), c.char)", invalid: "c.let(\"ch\", n, c.char)" },
+  { name: "char brand", valid: "declare const ch: Char; const value: string = ch", invalid: "const ch: Char = \"a\"" },
+  {
+    name: "char expression",
+    valid: "const ch: Expr<C, Char> = c.literal(c.char, \"a\")",
+    invalid: "declare const ch: Ref<C, string>; c.let(\"ch\", ch, c.char)",
+  },
   { name: "bool condition", valid: "c.if(c.true, function*() {})", invalid: "c.if(n, function*() {})" },
   { name: "ternary branches", valid: "c.ternary(c.true, n, n)", invalid: "c.ternary(c.true, n, p)" },
   { name: "declared binding type", valid: "c.let(\"n\", n, c.int(32))", invalid: "c.let(\"n\", n)" },
