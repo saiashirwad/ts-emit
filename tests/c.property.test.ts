@@ -107,14 +107,25 @@ ${calls}
   )
 })
 
-test("C array initializers preserve numeric bounds and ASCII elements", () => {
+test("C array indexing, assignment, and element pointers preserve numeric bounds and ASCII initializers", () => {
   fc.assert(
     fc.property(fc.tuple(...integers.map((type) => value(type))), fc.integer({ min: 0, max: 127 }), (values, code) => {
       const program = c.program(function*() {
         for (const [index, type] of integers.entries()) {
           const raw = type.bits === 64 ? values[index]! : Number(values[index]!)
           const array = c.array(typeNode(type), 2)
-          yield* c.let(`values_${index}`, c.literal(array, [raw, raw]), array)
+          const zero = type.bits === 64 ? 0n : 0
+          const elements = yield* c.let(`values_${index}`, c.literal(array, [zero, zero]), array)
+          yield* c.fn(`update_${index}`, [], typeNode(type), function*() {
+            const at = yield* c.let("at", c.literal(c.i32, 0), c.i32)
+            yield* c.while(c.less(at, c.literal(c.i32, 1)), function*() {
+              yield* c.assign(c.index(elements, at), c.literal(typeNode(type), raw))
+              yield* c.assign(at, c.add(at, c.literal(c.i32, 1)))
+            })
+            const pointer = yield* c.let("pointer", c.address(c.index(elements, c.literal(c.u64, 1n))), c.ptr(typeNode(type)))
+            yield* c.assign(c.deref(pointer), c.index(elements, c.literal(c.i8, 0)))
+            yield* c.return(c.index(elements, c.literal(c.i64, 1n)))
+          })
         }
         const chars = c.array(c.char, 2)
         yield* c.let("letters", c.literal(chars, [String.fromCharCode(code), "\n"]), chars)
@@ -126,7 +137,7 @@ test("C array initializers preserve numeric bounds and ASCII elements", () => {
         const spelling = expected === -(1n << 63n)
           ? "INT64_MIN"
           : `${expected < 0n ? "-" : ""}${type.signed ? "INT64_C" : "UINT64_C"}(${expected < 0n ? -expected : expected})`
-        return `values_${index}[0] == ${spelling} && values_${index}[1] == ${spelling}`
+        return `update_${index}() == ${spelling} && values_${index}[0] == ${spelling} && values_${index}[1] == ${spelling}`
       })
       const source = `${emitC(program)}
 #include <math.h>

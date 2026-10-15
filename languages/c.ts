@@ -115,6 +115,12 @@ export interface UnaryNode {
   readonly operand: Expr<C, unknown>
   readonly lvalue?: true
 }
+export interface IndexNode {
+  readonly kind: "index"
+  readonly array: Expr<C, unknown>
+  readonly at: Expr<C, unknown>
+  readonly lvalue: true
+}
 export interface CastNode {
   readonly kind: "cast"
   readonly operand: Expr<C, unknown>
@@ -136,6 +142,7 @@ const pointerTypeClass = typeClass<PointerTypeNode>({ children: (node) => [node.
 const arrayTypeClass = typeClass<ArrayTypeNode>({ children: (node) => [node.element] })
 const literalClass = exprClass<LiteralNode>({ children: (node) => Array.isArray(node.value) ? node.value : [] })
 const unaryClass = exprClass<UnaryNode>({ children: (node) => [node.operand] })
+const indexClass = exprClass<IndexNode>({ children: (node) => [node.array, node.at] })
 const castClass = exprClass<CastNode>({ children: (node) => [node.operand] })
 const ternaryClass = exprClass<TernaryNode>({ children: (node) => [node.condition, node.then, node.otherwise] })
 
@@ -258,6 +265,29 @@ export const c = {
     type: TypeNode<C, D, FT>,
     operand: Expr<C, A, FA>,
   ): Expr<C, D, { readonly kind: "cast" } | FT | FA> => expr(castClass, { kind: "cast", operand }, type),
+  index: <
+    D extends readonly (I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char)[],
+    FA extends Facts,
+    FI extends Facts,
+  >(
+    array: Expr<C, D, FA>,
+    at: Expr<C, I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64, FI>,
+  ): Lvalue<C, D[number], { readonly kind: "index" } | FA | FI> => {
+    if (array.type.kind !== "array-type") throw new Error("index needs an array type")
+    if (at.type.kind !== "int-type") throw new Error("index needs an integer type")
+    const type = fieldsOf<ArrayTypeNode>(array.type)
+    if (at.kind === "literal") {
+      const value = fieldsOf<LiteralNode>(at).value
+      if ((typeof value === "number" || typeof value === "bigint") && (value < 0 || value >= type.length)) {
+        throw new Error("array index is out of bounds")
+      }
+    }
+    return expr<C, D[number], { readonly kind: "index" } | FA | FI>(
+      indexClass,
+      { kind: "index", array, at, lvalue: true },
+      type.element,
+    ) as Lvalue<C, D[number], { readonly kind: "index" } | FA | FI>
+  },
   address: <D, F extends Facts>(operand: Lvalue<C, D, F>): Expr<C, Ptr<D>, { readonly kind: "address" } | F> => {
     if (!isLvalue(operand)) throw new Error("only an lvalue has an address")
     return expr(unaryClass, { kind: "address", operand }, typeNode(pointerTypeClass, { kind: "pointer-type", to: operand.type }))
@@ -291,6 +321,7 @@ export const c = {
       children(parent).forEach((child) => {
         if (child.role !== "expr" || fieldsOf<Expr<C, unknown>>(child).type.kind !== "array-type") return
         if (parent.kind === "let" && fieldsOf<LetNode>(parent).init === child && child.kind === "literal") return
+        if (parent.kind === "index" && fieldsOf<IndexNode>(parent).array === child && child.kind !== "literal") return
         throw new Error("whole array use is not supported")
       })
     })
@@ -395,6 +426,7 @@ export const cTarget = defineTarget(
       return value < 0 || Object.is(value, -0) ? frag(UNARY, `-${magnitude}`) : frag(POSTFIX, magnitude)
     },
     ref: (node: RefNode, emit) => emit.name(node.binding),
+    index: (node: IndexNode, emit) => ({ prec: POSTFIX, text: `${emit.at(node.array, POSTFIX)}[${emit.node(node.at).text}]` }),
     cast: (node: CastNode, emit) => ({ prec: UNARY, text: `(${emit.node(node.type).text})${emit.at(node.operand, UNARY)}` }),
     address: (node: UnaryNode, emit) => ({ prec: UNARY, text: `&${emit.at(node.operand, UNARY)}` }),
     deref: (node: UnaryNode, emit) => ({ prec: UNARY, text: `*${emit.at(node.operand, UNARY)}` }),

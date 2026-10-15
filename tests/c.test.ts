@@ -587,3 +587,62 @@ test("C rejects each whole-array occurrence, even when a literal also initialize
       yield* c.fn("invalid", [c.param("values", type)], c.void, function*() {})
     }), /array function parameters/)
 })
+
+test("C indexing retains element lvalues and postfix precedence", () => {
+  const program = c.program(function*() {
+    const type = c.array(c.i32, 2)
+    const array = yield* c.let("values", c.literal(type, [1, 2]), type)
+    yield* c.fn("element", [], c.i32, function*() {
+      const element = c.index(array, i32(0))
+      assertType<Equal<lang.Denotes<typeof element>, I32>>()
+      assertType<Equal<typeof element extends lang.Lvalue<C, I32> ? true : false, true>>()
+      assert.ok(lang.isLvalue(element))
+      const letters = yield* c.let("letters", c.literal(c.array(c.char, 1), ["a"]), c.array(c.char, 1))
+      const letter = c.index(letters, i32(0))
+      assertType<Equal<lang.Denotes<typeof letter>, import("../languages/c.ts").Char>>()
+      yield* c.assign(letter, c.literal(c.char, "b"))
+      yield* c.assign(c.index(array, c.literal(c.i8, 0)), i32(3))
+      yield* c.assign(c.index(array, c.literal(c.i16, 0)), i32(3))
+      yield* c.assign(c.index(array, i32(0)), i32(3))
+      yield* c.assign(c.index(array, c.literal(c.u8, 0)), i32(3))
+      yield* c.assign(c.index(array, c.literal(c.u16, 0)), i32(3))
+      yield* c.assign(c.index(array, u32(0)), i32(3))
+      yield* c.assign(c.index(array, c.literal(c.i64, 1n)), i32(4))
+      yield* c.assign(c.index(array, c.literal(c.u64, 1n)), i32(4))
+      const pointer = yield* c.let("pointer", c.address(element), c.ptr(c.i32))
+      yield* c.assign(c.deref(pointer), c.add(element, i32(1)))
+      yield* c.return(c.index(array, c.ternary(c.true, i32(0), i32(1))))
+    })
+  })
+  const emitted = emitC(program)
+  assert.match(emitted, /int32_t\* pointer = &values\[0\];/)
+  assert.match(emitted, /\*pointer = values\[0\] \+ 1;/)
+  assert.match(emitted, /values\[INT64_C\(1\)\] = 4;/)
+  assert.match(emitted, /values\[UINT64_C\(1\)\] = 4;/)
+  assert.match(emitted, /return values\[true \? 0 : 1\];/)
+})
+
+test("C indexing checks types and literal bounds but leaves expressions unchecked", () => {
+  const literal = c.literal(c.array(c.i32, 2), [1, 2])
+  for (const at of [i32(-1), i32(2), c.literal(c.i64, -1n), c.literal(c.i64, 2n), c.literal(c.u64, (1n << 64n) - 1n)]) {
+    assert.throws(() => c.index(literal, at), /out of bounds/)
+  }
+  for (const at of [f64(0), c.true, c.literal(c.char, "a")]) {
+    assert.throws(() => c.index(literal, at as never), /integer type/)
+  }
+  assert.throws(() => c.index(i32(0) as never, i32(0)), /array type/)
+  assert.doesNotThrow(() => c.index(literal, c.add(i32(1), i32(1))))
+  assert.throws(() =>
+    c.program(function*() {
+      yield* c.fn("invalid", [], c.i32, function*() {
+        yield* c.return(c.index(literal, i32(0)))
+      })
+    }), /whole array use/)
+  c.program(function*() {
+    const type = c.array(c.i32, 2)
+    const array = yield* c.let("values", literal, type)
+    yield* c.fn("unchecked", [c.param("at", c.i32)], c.i32, function*(at) {
+      yield* c.return(c.index(array, at))
+    })
+  })
+})

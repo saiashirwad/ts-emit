@@ -11,6 +11,27 @@ declare const n: Ref<C, I32>
 const p = c.address(n)
 `
 const cases = [
+  ...["c.literal(c.f64, 0)", "c.literal(c.char, \"a\")", "c.true", "p"].map((at) => ({
+    name: `index rejects ${at}`,
+    valid: "c.index(c.literal(c.array(c.i32, 1), [1]), n)",
+    invalid: `c.index(c.literal(c.array(c.i32, 1), [1]), ${at})`,
+  })),
+  { name: "index array input", valid: "c.index(c.literal(c.array(c.i32, 1), [1]), n)", invalid: "c.index(p, n)" },
+  {
+    name: "index element assignment",
+    valid: "c.assign(c.index(c.literal(c.array(c.i32, 1), [1]), n), n)",
+    invalid: "c.assign(c.index(c.literal(c.array(c.i32, 1), [1]), n), c.literal(c.f64, 1))",
+  },
+  {
+    name: "index char assignment",
+    valid: "c.assign(c.index(c.literal(c.array(c.char, 1), [\"a\"]), n), c.literal(c.char, \"b\"))",
+    invalid: "c.assign(c.index(c.literal(c.array(c.char, 1), [\"a\"]), n), n)",
+  },
+  {
+    name: "index element address",
+    valid: "c.let(\"p\", c.address(c.index(c.literal(c.array(c.i32, 1), [1]), n)), c.ptr(c.i32))",
+    invalid: "c.let(\"p\", c.address(c.index(c.literal(c.array(c.i32, 1), [1]), n)), c.ptr(c.f64))",
+  },
   {
     name: "array binding length",
     valid: "c.let(\"a\", c.literal(c.array(c.i32, 1), [1]), c.array(c.i32, 1))",
