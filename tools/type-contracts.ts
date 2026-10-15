@@ -82,7 +82,7 @@ const cases = [
       "c.program(function*() { const f = yield* c.fn(\"f\", [c.param(\"x\", c.i8)], c.i8, function*(x) { yield* c.return(x) }); c.call(f, n) })",
   },
   { name: "pointer assignment", valid: "c.let(\"p\", p, c.ptr(c.i32))", invalid: "c.let(\"p\", p, c.ptr(c.f64))" },
-  { name: "pointer arithmetic", valid: "c.add(p, n)", invalid: "c.add(p, p)" },
+  { name: "pointer arithmetic", valid: "c.add(n, n)", invalid: "c.add(p, n)" },
   { name: "pointer dereference", valid: "c.deref(p)", invalid: "c.deref(n)" },
   { name: "void pointer dereference", valid: "c.deref(p)", invalid: "declare const v: Expr<C, Ptr<Void>>; c.deref(v)" },
   { name: "address of an lvalue", valid: "c.address(c.deref(p))", invalid: "c.address(c.literal(c.i32, 1))" },

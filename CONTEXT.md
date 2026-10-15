@@ -22,7 +22,7 @@ C supports fixed-width integers, double, bool, ASCII char, fixed-length numeric 
 
 `c.array(element, length)` denotes a readonly `Tuple<T, N>`. Lengths are positive integer literals, checked as safe integers at runtime. Array literals take exact-length tuples of raw scalar inputs and are only allowed as direct binding initializers. `c.index(array, at)` returns an element lvalue and accepts any integer type for the index. Literal indices are checked against the array length at construction, including bigint indices; other expressions are unchecked. Nonliteral whole-array expressions are allowed only as indexing targets. Whole-array assignment and other uses, array function parameters and results, and pointers to arrays are rejected.
 
-C has no implicit conversions or promotions. Assignment, call arguments, and returns require equal denotations. Numeric `add` and `less` require equal numeric types. Addition retains that type, including for integers narrower than 32 bits. Pointer plus integer, in either order, retains the pointer type.
+C has no implicit conversions or promotions. Assignment, call arguments, and returns require equal denotations. Numeric `add` and `less` require equal numeric types. Addition retains that type, including for integers narrower than 32 bits. Pointers have no arithmetic; `c.index` reaches array elements.
 
 `c.cast(c.i32, value)` explicitly converts between numeric types only. Casts have no runtime range checks. Out-of-range floating-to-integer casts have undefined behavior. Signed integer narrowing is implementation-defined. Unsigned integer narrowing wraps. These remain unchecked, like arithmetic overflow.
 

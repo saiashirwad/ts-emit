@@ -26,11 +26,11 @@ export const arithmeticContracts = () => {
       // @ts-expect-error a C binding needs a declared type
       yield* c.let("untyped", n)
       const p = yield* c.let("p", c.address(n), c.ptr(c.i32))
-      const q = c.add(p, i32(1))
-      assertType<Equal<lang.Denotes<typeof q>, Ptr<I32>>>()
-      const flipped = c.add(i32(1), p)
-      assertType<Equal<lang.Denotes<typeof flipped>, Ptr<I32>>>()
-      yield* c.let("q", q, c.ptr(c.i32))
+      // @ts-expect-error a pointer has no arithmetic
+      c.add(p, i32(1))
+      // @ts-expect-error a pointer has no arithmetic, in either order
+      c.add(i32(1), p)
+      yield* c.let("q", p, c.ptr(c.i32))
       yield* c.let("m", c.deref(p), c.i32)
       // @ts-expect-error int* to double* needs a cast in C
       yield* c.let("r", p, c.ptr(c.f64))
@@ -441,18 +441,18 @@ test("C rejects invalid program structure", () => {
   )
   const constants = c.program(function*() {
     const x = yield* c.let("x", c.add(i32(1), c.ternary(c.less(i32(2), i32(3)), i32(1), i32(0))), c.i32)
-    yield* c.let("p", c.add(i32(1), c.address(x)), c.ptr(c.i32))
+    yield* c.let("p", c.address(x), c.ptr(c.i32))
   })
-  assert.equal(emitC(constants), "#include <stdbool.h>\n#include <stdint.h>\n\nint32_t x = 1 + (2 < 3 ? 1 : 0);\nint32_t* p = 1 + &x;\n")
+  assert.equal(emitC(constants), "#include <stdbool.h>\n#include <stdint.h>\n\nint32_t x = 1 + (2 < 3 ? 1 : 0);\nint32_t* p = &x;\n")
 })
 
-test("C executes pointer arithmetic, assignment through pointers, loops, and typed calls", () => {
+test("C executes assignment through pointers, loops, and typed calls", () => {
   const program = c.program(function*() {
     const count = yield* c.fn("count", [c.param("value", c.ptr(c.i32))], c.i32, function*(value) {
       const total = yield* c.let("total", i32(0), c.i32)
       const i = yield* c.let("i", i32(0), c.i32)
       yield* c.while(c.less(i, i32(3)), function*() {
-        yield* c.assign(total, c.add(total, c.deref(c.add(value, i32(0)))))
+        yield* c.assign(total, c.add(total, c.deref(value)))
         yield* c.assign(i, c.add(i, i32(1)))
       })
       yield* c.return(total)

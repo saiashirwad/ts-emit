@@ -70,10 +70,7 @@ export interface CTruthy extends TypeLambda {
 
 export interface CSum extends TypeLambda {
   readonly type: this["Args"] extends readonly [infer A, infer B]
-    ? [A, B] extends [Ptr<unknown>, I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64] ? A
-    : [A, B] extends [I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64, Ptr<unknown>] ? B
-    : [A] extends [I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64] ? Equal<A, B> extends true ? A : never
-    : never
+    ? [A] extends [I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64] ? Equal<A, B> extends true ? A : never : never
     : never
 }
 
@@ -160,17 +157,12 @@ const isArithmeticConstant = (node: AnyNode): boolean =>
   || (node.kind === "ternary" && [fieldsOf<TernaryNode>(node).condition, fieldsOf<TernaryNode>(node).then, fieldsOf<TernaryNode>(node).otherwise]
     .every(isArithmeticConstant))
 
-const isAddressConstant = (node: AnyNode): boolean => {
-  if (node.kind === "address") return fieldsOf<UnaryNode>(node).operand.kind === "ref"
-  if (node.kind !== "add") return false
-  const { left, right } = fieldsOf<BinaryNode>(node)
-  return (isAddressConstant(left) && isArithmeticConstant(right)) || (isArithmeticConstant(left) && isAddressConstant(right))
-}
+const isAddressConstant = (node: AnyNode): boolean => node.kind === "address" && fieldsOf<UnaryNode>(node).operand.kind === "ref"
 
 export const c = {
   ...structured<C>(),
   ...functionConstruct<C>(),
-  ...addConstruct<C>((left, right) => left.kind === "pointer-type" ? left : right.kind === "pointer-type" ? right : left),
+  ...addConstruct<C>((left) => left),
   ...lessConstruct<C>((): RuntimeType => c.bool),
 
   i8: typeNode<C, I8, IntFacts>(intTypeClass, { kind: "int-type", bits: 8, signed: true }),
