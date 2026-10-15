@@ -1,36 +1,9 @@
 # ts-emit
 
-Build C, Prolog, and Lua programs from TypeScript.
+An experiment in using TypeScript to build and emit programs in other languages.
 
-```ts
-import { c, emitC } from "@texoport/ts-emit/languages/c"
+TypeScript is the host here, not an output target. Instead of string templates or a heavy compiler pipeline, it's exploring small typed builders where generator blocks (`yield*`) handle sequence, local bindings, and scope hygiene.
 
-const program = c.program(function*() {
-  yield* c.fn("main", [], c.i32, function*() {
-    yield* c.return(c.literal(c.i32, 0))
-  })
-})
+There are small working builders for C, Lua, and Prolog in `languages/` (with runnable examples in `examples/`) to see how very different languages feel, but the core is meant for any target.
 
-console.log(emitC(program))
-```
-
-Small language-specific builders, not complete language checkers. TypeScript is the builder language, not an output target.
-
-See [`examples/c.ts`](examples/c.ts), [`examples/prolog.ts`](examples/prolog.ts), and [`examples/lua.ts`](examples/lua.ts). Run an example with `node examples/c.ts`.
-
-## Checks
-
-Use Node.js 24 or later and pnpm. Runtime tests require a C compiler (`cc`), SWI-Prolog (`swipl`), and Lua (`lua`).
-
-```sh
-pnpm install
-pnpm verify
-```
-
-Verification checks types and runs emitted programs in all three runtimes. fast-check runtime properties use bounded batches and a fixed seed. Replay a failure with its reported seed and path:
-
-```sh
-FC_SEED=20261015 FC_PATH='0:1' node --test --test-name-pattern='property name' tests/lua.property.test.ts
-```
-
-Use the failing test's name, file, seed, and path.
+Still very much a work in progress.
