@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 
-import { type C, c, cTarget, emitC, type F64, type I32, type I8, type Ptr } from "../languages/c.ts"
+import { type Allocator, type C, c, cTarget, emitC, type F64, type I32, type I8, type Ptr } from "../languages/c.ts"
 import * as lang from "../src/index.ts"
 import { assertType, type Equal } from "./typing.ts"
 
@@ -941,4 +941,68 @@ test("C new rejects values that cannot be allocated", () => {
       })
     })
   })
+})
+
+test("C allocators pass through function arguments and nowhere else", () => {
+  const program = c.program(function*() {
+    const newCounter = yield* c.fn(
+      "newCounter",
+      [c.param("allocator", c.allocator), c.param("start", c.i32)],
+      c.nullable(c.ptr(c.i32)),
+      function*(allocator, start) {
+        yield* c.return(c.new(allocator, start))
+      },
+    )
+    yield* c.fn("main", [], c.i32, function*() {
+      yield* c.arena("scratch", 16, function*(scratch) {
+        yield* c.maybe(function*() {
+          const counter = yield* c.bind("counter", c.call(newCounter, scratch, i32(41)))
+          yield* c.return(c.add(c.deref(counter), i32(1)))
+        })
+      })
+      yield* c.return(i32(0))
+    })
+  })
+  const emitted = emitC(program)
+  assert.match(
+    emitted,
+    /int32_t\* newCounter\(Arena\* allocator, int32_t start\) \{\n  return arena_new\(allocator, sizeof\(int32_t\), _Alignof\(int32_t\), &\(int32_t\)\{start\}\);\n\}/,
+  )
+  assert.match(emitted, /int32_t\* counter = newCounter\(scratch, 41\);/)
+  const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-"))
+  try {
+    const source = join(directory, "program.c")
+    const executable = join(directory, "program")
+    writeFileSync(source, emitted)
+    const compiled = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", executable], { encoding: "utf8" })
+    assert.ifError(compiled.error)
+    assert.equal(compiled.status, 0, compiled.stderr)
+    const executed = spawnSync(executable, [], { encoding: "utf8" })
+    assert.ifError(executed.error)
+    assert.equal(executed.status, 42, executed.stderr)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+
+  const rejected = (body: (scratch: lang.Ref<C, Allocator>) => Generator<lang.Stmt<C, lang.Facts, unknown>, void, unknown>) =>
+    assert.throws(() =>
+      c.program(function*() {
+        yield* c.fn("main", [], c.void, function*() {
+          yield* c.arena("scratch", 16, body)
+        })
+      }), /an allocator can only be passed as an argument/)
+  rejected(function*(scratch) {
+    yield* c.let("kept", scratch, c.allocator)
+  })
+  rejected(function*(scratch) {
+    yield* c.run(scratch)
+  })
+  assert.throws(() =>
+    c.program(function*() {
+      yield* c.fn("leak", [c.param("allocator", c.allocator)], c.allocator, function*(allocator) {
+        yield* c.return(allocator)
+      })
+    }), /an allocator can only be passed as an argument/)
+  // @ts-expect-error a pointer to an allocator is not supported
+  assert.throws(() => c.ptr(c.allocator), /an allocator can only be passed as an argument/)
 })

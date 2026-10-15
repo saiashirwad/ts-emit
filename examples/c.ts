@@ -18,6 +18,15 @@ export const program = c.program(function*() {
     yield* c.assign(c.deref(b), t)
   })
 
+  const newCounter = yield* c.fn(
+    "newCounter",
+    [c.param("allocator", c.allocator), c.param("start", c.i32)],
+    c.nullable(c.ptr(c.i32)),
+    function*(allocator, start) {
+      yield* c.return(c.new(allocator, start))
+    },
+  )
+
   // TODO: allow recursion. fib loops instead because its binding only exists once c.fn returns.
   const fib = yield* c.fn("fib", [c.param("n", c.i32)], c.i64, function*(n) {
     yield* c.run(c.call(increment, c.address(calls)))
@@ -70,6 +79,12 @@ export const program = c.program(function*() {
     yield* c.maybe(function*() {
       const counter = yield* c.bind("counter", lastCounter)
       yield* c.assign(c.deref(counter), i32(0))
+    })
+    yield* c.arena("scratch", 16, function*(scratch) {
+      yield* c.maybe(function*() {
+        const counter = yield* c.bind("counter", c.call(newCounter, scratch, i32(0)))
+        yield* c.assign(c.deref(counter), c.add(c.deref(counter), i32(1)))
+      })
     })
     const type = c.array(c.i32, 2)
     const values = yield* c.let("values", c.literal(type, [7, 3]), type)

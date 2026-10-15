@@ -264,9 +264,10 @@ export const c = {
     return typeNode(arrayTypeClass, { kind: "array-type", element, length })
   },
   ptr: <T, F extends Facts>(
-    to: TypeNode<C, T, F> & (T extends readonly unknown[] ? never : unknown),
+    to: TypeNode<C, T, F> & (T extends readonly unknown[] ? never : [T] extends [Allocator] ? never : unknown),
   ): TypeNode<C, Ptr<T>, { readonly kind: "pointer-type" } | F> => {
     if (to.kind === "array-type") throw new Error("pointer to array is not supported")
+    if (to.kind === "allocator-type") throw new Error("an allocator can only be passed as an argument")
     return typeNode(pointerTypeClass, { kind: "pointer-type", to })
   },
   nullable: <T extends Ptr<unknown>, F extends Facts>(
@@ -429,6 +430,7 @@ export const c = {
         if (node.returns.kind === "array-type" || node.params.some((param) => param.type.kind === "array-type")) {
           throw new Error("array function parameters and results are not supported")
         }
+        if (node.returns.kind === "allocator-type") throw new Error("an allocator can only be passed as an argument")
       }
       if (parent.kind === "bind" && fieldsOf<BindNode>(parent).body === undefined) {
         throw new Error("\"bind\" must be directly inside \"maybe\"")
@@ -447,7 +449,12 @@ export const c = {
         }
       }
       children(parent).forEach((child) => {
-        if (child.role !== "expr" || fieldsOf<Expr<C, unknown>>(child).type.kind !== "array-type") return
+        if (child.role !== "expr") return
+        const type = fieldsOf<Expr<C, unknown>>(child).type
+        if (type.kind === "allocator-type" && parent.kind !== "call" && !(parent.kind === "new" && fieldsOf<NewNode>(parent).allocator === child)) {
+          throw new Error("an allocator can only be passed as an argument")
+        }
+        if (type.kind !== "array-type") return
         if (parent.kind === "let" && fieldsOf<LetNode>(parent).init === child && child.kind === "literal") return
         if (parent.kind === "index" && fieldsOf<IndexNode>(parent).array === child && child.kind === "ref") return
         throw new Error("whole array use is not supported")
