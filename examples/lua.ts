@@ -1,8 +1,8 @@
 import { emitLua, lua } from "../languages/lua.ts"
 
 export const program = lua.program(function*() {
-  // fib loops instead of recursing because its binding only exists once lua.fn returns.
-  const fib =yield* lua.fn("fib", [lua.param("n", lua.number)], lua.number, function*(n) {
+  // TODO: allow recursion. fib loops instead because its binding only exists once lua.fn returns.
+  const fib = yield* lua.fn("fib", [lua.param("n", lua.number)], lua.number, function*(n) {
     const a = yield* lua.let("a", lua.literal(0))
     const b = yield* lua.let("b", lua.literal(1))
     const i = yield* lua.let("i", lua.literal(0))
@@ -21,8 +21,8 @@ export const program = lua.program(function*() {
       yield* lua.return(x)
     })
   })
-  // Each function names its parameter n, so the emitted Lua renames the later ones to n_2 and n_3.
-  const size =yield* lua.fn("size", [lua.param("n", lua.number)], lua.string, function*(n) {
+  // TODO: keep names that only clash across functions. Each function names its parameter n, so the emitted Lua renames the later ones to n_2 and n_3.
+  const size = yield* lua.fn("size", [lua.param("n", lua.number)], lua.string, function*(n) {
     yield* lua.if(lua.less(n, lua.literal(10)), function*() {
       yield* lua.return(lua.literal("small"))
     }, function*() {
