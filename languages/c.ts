@@ -173,6 +173,9 @@ export const c = {
     if (type.kind === "char-type" && (typeof value !== "string" || value.length !== 1 || value.charCodeAt(0) > 127)) {
       throw new Error(`char cannot hold the literal ${JSON.stringify(value)}`)
     }
+    if (type.kind === "double-type" && typeof value !== "number") {
+      throw new Error(`double cannot hold the literal ${value}`)
+    }
     if (type.kind === "int-type") {
       const node = fieldsOf<IntTypeNode>(type)
       if (node.bits === 64) {

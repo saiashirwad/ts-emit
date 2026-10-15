@@ -249,6 +249,7 @@ bool infinity = -1.0 / 0.0 < 1.0 / 0.0;
   assert.throws(() => c.literal(c.char, "é"), /char cannot hold the literal "é"/)
   assert.throws(() => c.literal(c.char, "ab"), /char cannot hold the literal "ab"/)
   assert.throws(() => c.literal(c.char, ""), /char cannot hold the literal ""/)
+  assert.throws(() => c.literal(c.f64, 1n as never), /double cannot hold the literal 1/)
 })
 
 test("C narrow integer sums retain their type and wrap before comparison", () => {
