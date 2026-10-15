@@ -47,9 +47,7 @@ export type U32 = number & { readonly [CType]: "u32" }
 export type U64 = bigint & { readonly [CType]: "u64" }
 export type F64 = number & { readonly [CType]: "f64" }
 export type Ptr<T> = { readonly [CType]: "pointer"; readonly to: T }
-export interface Void {
-  readonly c: "void"
-}
+export type Void = { readonly [CType]: "void" }
 
 export interface CAssign extends TypeLambda {
   readonly type: this["Args"] extends readonly [infer A, infer B] ? Equal<A, B> : false
