@@ -28,7 +28,7 @@ const sums = (depth: number, leaf: fc.Arbitrary<number> = integer): fc.Arbitrary
     ? leaf
     : fc.oneof(leaf, fc.record({ left: sums(depth - 1, leaf), right: sums(depth - 1, leaf) }))
 const evaluate = (sum: Sum): number => typeof sum === "number" ? sum : evaluate(sum.left) + evaluate(sum.right)
-const expression = (sum: Sum): Expr<"number"> =>
+const expression = (sum: Sum): Expr<number> =>
   typeof sum === "number"
     ? lua.literal(sum)
     : lua.add(expression(sum.left), expression(sum.right))
@@ -138,7 +138,7 @@ test("Lua rejects bindings escaping their lexical branch", () => {
   fc.assert(
     fc.property(batch(fc.tuple(names, integer)), (cases) => {
       for (const [[name], value] of cases) {
-        let escaped: Binding<"number"> | undefined
+        let escaped: Binding<number> | undefined
         const program = lua.program(function*() {
           yield* lua.if(lua.literal(true), function*() {
             escaped = yield* lua.let(name!, lua.literal(value))

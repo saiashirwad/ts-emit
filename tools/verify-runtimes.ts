@@ -29,8 +29,10 @@ try {
   const lua = join(directory, "example.lua")
   writeFileSync(lua, run(process.execPath, ["examples/lua.ts"]))
   const output = run("lua", [lua])
-  if (output !== "45\n") throw new Error(`Lua example returned ${JSON.stringify(output)} instead of 45`)
-  console.log("Lua example returned 45")
+  const fibs = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89]
+  const expected = fibs.map((value, n) => `${n}\t${value}\t${value < 10 ? "small" : "large"}\n`).join("") + "largest\t89\n"
+  if (output !== expected) throw new Error(`Lua example returned ${JSON.stringify(output)} instead of ${JSON.stringify(expected)}`)
+  console.log("Lua example printed the first 12 Fibonacci numbers")
 } finally {
   rmSync(directory, { recursive: true, force: true })
 }

@@ -1,17 +1,25 @@
+declare const DenotationOf: unique symbol
+
 export type LuaType = "number" | "string" | "boolean" | "nil" | "function"
 export type Value = number | string | boolean | null
+export type Denotation = Value | ((...args: never) => Value)
 
-export interface Expr<T extends LuaType = LuaType> {
-  readonly type: T
+export type Type<T extends Value> = LuaType & { readonly [DenotationOf]: T }
+
+export interface Expr<T extends Denotation = Denotation> {
+  readonly type: LuaType
   readonly node: ExprNode
+  readonly [DenotationOf]?: T
 }
 
-export interface Binding<T extends LuaType = LuaType> extends Expr<T> {
+export type Denotes<E> = E extends Expr<infer T> ? T : never
+
+export interface Binding<T extends Denotation = Denotation> extends Expr<T> {
   readonly node: { readonly kind: "ref"; readonly id: symbol; readonly name: string }
 }
 
-export interface FunctionRef<R extends LuaType = LuaType> extends Binding<"function"> {
-  readonly result: R
+export interface FunctionRef<F extends (...args: never) => Value = (...args: never) => Value> extends Binding<F> {
+  readonly result: LuaType
   readonly parameters: readonly LuaType[]
   readonly builtin?: "print"
 }
@@ -37,17 +45,19 @@ export interface Program {
 
 type Body = () => Generator<Stmt, unknown, unknown>
 type Params<P extends readonly Binding[]> = { [K in keyof P]: P[K] }
+type Args<F> = F extends (...args: infer P extends readonly Value[]) => Value ? { [K in keyof P]: Expr<P[K]> } : never
+type Signature<P extends readonly Binding[], R extends Value> = (...args: { [K in keyof P]: Denotes<P[K]> }) => R
 
 const collect = (body: Body): Stmt[] => [...body()]
-const binding = <T extends LuaType>(name: string, type: T): Binding<T> => ({ type, node: { kind: "ref", id: Symbol(name), name } })
+const binding = <T extends Denotation>(name: string, type: LuaType): Binding<T> => ({ type, node: { kind: "ref", id: Symbol(name), name } })
 const statement = function*(node: Stmt): Generator<Stmt, void, unknown> {
   yield node
 }
 
-function literal(value: number): Expr<"number">
-function literal(value: string): Expr<"string">
-function literal(value: boolean): Expr<"boolean">
-function literal(value: null): Expr<"nil">
+function literal(value: number): Expr<number>
+function literal(value: string): Expr<string>
+function literal(value: boolean): Expr<boolean>
+function literal(value: null): Expr<null>
 function literal(value: Value): Expr {
   if (typeof value === "number" && !Number.isFinite(value)) throw new Error("Lua literals require finite numbers")
   return { type: value === null ? "nil" : typeof value as "number" | "string" | "boolean", node: { kind: "literal", value } }
@@ -61,34 +71,43 @@ const checkAssignment = (local: Binding, value: Expr): void => {
 const guaranteesReturn = (body: readonly Stmt[]): boolean =>
   body.some((stmt) => stmt.kind === "return" || (stmt.kind === "if" && guaranteesReturn(stmt.body) && guaranteesReturn(stmt.otherwise)))
 
-const print: FunctionRef<"nil"> = { ...binding("print", "function"), result: "nil", parameters: [], builtin: "print" }
+const print: FunctionRef<(...args: Value[]) => null> = {
+  ...binding<(...args: Value[]) => null>("print", "function"),
+  result: "nil",
+  parameters: [],
+  builtin: "print",
+}
 
 export const lua = {
-  number: "number" as const,
-  string: "string" as const,
-  boolean: "boolean" as const,
-  nil: "nil" as const,
+  number: "number" as Type<number>,
+  string: "string" as Type<string>,
+  boolean: "boolean" as Type<boolean>,
+  nil: "nil" as Type<null>,
   print,
   literal,
-  param: binding,
+  param: <T extends Value>(name: string, type: Type<T>): Binding<T> => binding(name, type),
   program: (body: Body): Program => ({ body: collect(body) }),
-  *fn<P extends readonly Binding[], R extends LuaType>(
+  *fn<const P extends readonly Binding<Value>[], R extends Value>(
     name: string,
     params: P,
-    result: R,
+    result: Type<R>,
     body: (...params: Params<P>) => Generator<Stmt, unknown, unknown>,
-  ): Generator<Stmt, FunctionRef<R>, unknown> {
-    const fn: FunctionRef<R> = { ...binding(name, "function"), result, parameters: params.map((param) => param.type) }
+  ): Generator<Stmt, FunctionRef<Signature<P, R>>, unknown> {
+    const fn: FunctionRef<Signature<P, R>> = {
+      ...binding<Signature<P, R>>(name, "function"),
+      result,
+      parameters: params.map((param) => param.type),
+    }
     yield { kind: "function", binding: fn, params, body: collect(() => body(...params)) }
     return fn
   },
-  *let<T extends LuaType>(name: string, value: Expr<T>, type: T = value.type): Generator<Stmt, Binding<T>, unknown> {
+  *let<T extends Value>(name: string, value: Expr<T>, type: Type<T> = value.type as Type<T>): Generator<Stmt, Binding<T>, unknown> {
     if (type !== value.type) throw new Error("Lua local type mismatch")
-    const local = binding(name, type)
+    const local = binding<T>(name, type)
     yield { kind: "let", binding: local, value }
     return local
   },
-  assign: <T extends Exclude<LuaType, "function">>(local: Binding<T>, value: Expr<T>): Generator<Stmt, void, unknown> => {
+  assign: <T extends Value>(local: Binding<T>, value: Expr<T>): Generator<Stmt, void, unknown> => {
     checkAssignment(local, value)
     return statement({ kind: "assign", binding: local, value })
   },
@@ -97,17 +116,17 @@ export const lua = {
     if (value.node.kind !== "call") throw new Error("Lua expression statements must be calls")
     return statement({ kind: "run", value })
   },
-  while: (condition: Expr<"boolean">, body: Body): Generator<Stmt, void, unknown> => statement({ kind: "while", condition, body: collect(body) }),
-  if: (condition: Expr<"boolean">, body: Body, otherwise: Body = function*() {}): Generator<Stmt, void, unknown> =>
+  while: (condition: Expr<boolean>, body: Body): Generator<Stmt, void, unknown> => statement({ kind: "while", condition, body: collect(body) }),
+  if: (condition: Expr<boolean>, body: Body, otherwise: Body = function*() {}): Generator<Stmt, void, unknown> =>
     statement({ kind: "if", condition, body: collect(body), otherwise: collect(otherwise) }),
-  call: <R extends LuaType>(fn: FunctionRef<R>, ...args: Expr[]): Expr<R> => {
+  call: <F extends (...args: never) => Value>(fn: FunctionRef<F>, ...args: Args<F>): Expr<ReturnType<F>> => {
     if (!fn.builtin && (args.length !== fn.parameters.length || args.some((arg, index) => arg.type !== fn.parameters[index]))) {
       throw new Error("Lua call arguments do not match parameters")
     }
     return { type: fn.result, node: { kind: "call", fn, args } }
   },
-  add: (left: Expr<"number">, right: Expr<"number">): Expr<"number"> => ({ type: "number", node: { kind: "add", left, right } }),
-  less: (left: Expr<"number">, right: Expr<"number">): Expr<"boolean"> => ({ type: "boolean", node: { kind: "less", left, right } }),
+  add: (left: Expr<number>, right: Expr<number>): Expr<number> => ({ type: "number", node: { kind: "add", left, right } }),
+  less: (left: Expr<number>, right: Expr<number>): Expr<boolean> => ({ type: "boolean", node: { kind: "less", left, right } }),
 }
 
 const reserved = new Set("and break do else elseif end false for function goto if in local nil not or repeat return then true until while".split(" "))

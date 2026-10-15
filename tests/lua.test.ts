@@ -66,7 +66,7 @@ test("Lua preserves builtin lookup with locals and parameters named _ENV", () =>
 })
 
 test("Lua rejects escaped branch bindings and undeclared parameters", () => {
-  let escaped: Binding<"number"> | undefined
+  let escaped: Binding<number> | undefined
   const program = lua.program(function*() {
     yield* lua.if(lua.literal(true), function*() {
       escaped = yield* lua.let("hidden", lua.literal(1))
@@ -120,7 +120,9 @@ test("Lua checks call arity and parameter types", () => {
     const fn = yield* lua.fn("identity", [lua.param("x", lua.number)], lua.number, function*(x) {
       yield* lua.return(x)
     })
+    // @ts-expect-error too few arguments
     assert.throws(() => lua.call(fn), /do not match parameters/)
+    // @ts-expect-error a string argument for a number parameter
     assert.throws(() => lua.call(fn, lua.literal("x")), /do not match parameters/)
   })
 })
