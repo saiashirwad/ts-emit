@@ -18,7 +18,9 @@ There is no TypeScript target, static evidence model, symbolic type evaluator, o
 
 ## Scope
 
-C supports fixed-width integers, double, bool, ASCII char, pointers, bindings, arithmetic, comparisons, ternaries, conditions, loops, functions, and calls. `I8`, `I16`, `I32`, `U8`, `U16`, `U32`, and `F64` are branded numbers. `I64` and `U64` are branded bigints, and their literals take bigint input. `Char` is a branded string with one ASCII character per literal. `Ptr<T>` carries a pointer brand and its pointee type. Bool denotes plain `boolean`, and conditions accept only bool.
+C supports fixed-width integers, double, bool, ASCII char, fixed-length numeric and char arrays, pointers, bindings, arithmetic, comparisons, ternaries, conditions, loops, functions, and calls. `I8`, `I16`, `I32`, `U8`, `U16`, `U32`, and `F64` are branded numbers. `I64` and `U64` are branded bigints, and their literals take bigint input. `Char` is a branded string with one ASCII character per literal. `Ptr<T>` carries a pointer brand and its pointee type. Bool denotes plain `boolean`, and conditions accept only bool.
+
+`c.array(element, length)` denotes a readonly `Tuple<T, N>`. Lengths are positive integer literals, checked as safe integers at runtime. Array literals take exact-length tuples of raw scalar inputs and are only allowed as direct binding initializers. Whole-array assignment and other uses, array function parameters and results, and pointers to arrays are rejected. Array indexing is not implemented yet.
 
 C has no implicit conversions or promotions. Assignment, call arguments, and returns require equal denotations. Numeric `add` and `less` require equal numeric types. Addition retains that type, including for integers narrower than 32 bits. Pointer plus integer, in either order, retains the pointer type.
 

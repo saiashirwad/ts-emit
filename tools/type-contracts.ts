@@ -11,6 +11,28 @@ declare const n: Ref<C, I32>
 const p = c.address(n)
 `
 const cases = [
+  {
+    name: "array binding length",
+    valid: "c.let(\"a\", c.literal(c.array(c.i32, 1), [1]), c.array(c.i32, 1))",
+    invalid: "c.let(\"a\", c.literal(c.array(c.i32, 1), [1]), c.array(c.i32, 2))",
+  },
+  {
+    name: "array binding element",
+    valid: "c.let(\"a\", c.literal(c.array(c.i32, 1), [1]), c.array(c.i32, 1))",
+    invalid: "c.let(\"a\", c.literal(c.array(c.i32, 1), [1]), c.array(c.f64, 1))",
+  },
+  { name: "array count", valid: "c.literal(c.array(c.i32, 2), [1, 2])", invalid: "c.literal(c.array(c.i32, 2), [1])" },
+  { name: "array excess count", valid: "c.literal(c.array(c.i32, 1), [1])", invalid: "c.literal(c.array(c.i32, 1), [1, 2])" },
+  { name: "array number input", valid: "c.literal(c.array(c.i32, 1), [1])", invalid: "c.literal(c.array(c.i32, 1), [1n])" },
+  { name: "array bigint input", valid: "c.literal(c.array(c.i64, 1), [1n])", invalid: "c.literal(c.array(c.i64, 1), [1])" },
+  { name: "array char input", valid: "c.literal(c.array(c.char, 1), [\"a\"])", invalid: "c.literal(c.array(c.char, 1), [1])" },
+  ...["bool", "void", "ptr(c.i32)", "array(c.i32, 1)"].map((element) => ({
+    name: `array element ${element}`,
+    valid: "c.array(c.i32, 1)",
+    invalid: `c.array(c.${element}, 1)`,
+  })),
+  { name: "pointer to array", valid: "c.ptr(c.i32)", invalid: "c.ptr(c.array(c.i32, 1))" },
+  { name: "array literal length", valid: "c.array(c.i32, 2)", invalid: "declare const length: number; c.array(c.i32, length)" },
   { name: "arithmetic assignment", valid: "c.let(\"n\", n, c.i32)", invalid: "c.let(\"n\", n, c.f64)" },
   { name: "mixed integer addition", valid: "c.add(n, n)", invalid: "c.add(n, c.literal(c.i64, 1n))" },
   { name: "mixed integer comparison", valid: "c.less(n, n)", invalid: "c.less(n, c.literal(c.i64, 1n))" },

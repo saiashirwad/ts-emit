@@ -4,6 +4,7 @@ import {
   braces,
   builder,
   type Check,
+  children,
   defineTarget,
   emit,
   type Equal,
@@ -47,6 +48,16 @@ export type U32 = number & { readonly [CType]: "u32" }
 export type U64 = bigint & { readonly [CType]: "u64" }
 export type F64 = number & { readonly [CType]: "f64" }
 export type Ptr<T> = { readonly [CType]: "pointer"; readonly to: T }
+export type Tuple<T, N extends number, A extends readonly T[] = readonly []> =
+    number extends N ? never
+  : N extends N ?
+      `${N}` extends "0" | `-${string}` ? never
+    : `${N}` extends `${bigint}` ?
+        A["length"] extends N ? A
+      : Tuple<T, N, readonly [...A, T]>
+    : never
+  : never
+
 export type Void = { readonly [CType]: "void" }
 
 export interface CAssign extends TypeLambda {
@@ -89,9 +100,14 @@ export interface PointerTypeNode {
   readonly kind: "pointer-type"
   readonly to: TypeNode<C, unknown>
 }
+export interface ArrayTypeNode {
+  readonly kind: "array-type"
+  readonly element: TypeNode<C, unknown>
+  readonly length: number
+}
 export interface LiteralNode {
   readonly kind: "literal"
-  readonly value: number | bigint | boolean | string
+  readonly value: number | bigint | boolean | string | ReadonlyArray<Expr<C, unknown>>
   readonly type: TypeNode<C, unknown>
 }
 export interface UnaryNode {
@@ -117,7 +133,8 @@ const boolTypeClass = typeClass()
 const charTypeClass = typeClass()
 const voidTypeClass = typeClass()
 const pointerTypeClass = typeClass<PointerTypeNode>({ children: (node) => [node.to] })
-const literalClass = exprClass<LiteralNode>()
+const arrayTypeClass = typeClass<ArrayTypeNode>({ children: (node) => [node.element] })
+const literalClass = exprClass<LiteralNode>({ children: (node) => Array.isArray(node.value) ? node.value : [] })
 const unaryClass = exprClass<UnaryNode>({ children: (node) => [node.operand] })
 const castClass = exprClass<CastNode>({ children: (node) => [node.operand] })
 const ternaryClass = exprClass<TernaryNode>({ children: (node) => [node.condition, node.then, node.otherwise] })
@@ -161,13 +178,38 @@ export const c = {
   char: typeNode<C, Char, { readonly kind: "char-type" }>(charTypeClass, { kind: "char-type" }),
   bool: typeNode<C, boolean, { readonly kind: "bool-type" }>(boolTypeClass, { kind: "bool-type" }),
   void: typeNode<C, Void, { readonly kind: "void-type" }>(voidTypeClass, { kind: "void-type" }),
-  ptr: <T, F extends Facts>(to: TypeNode<C, T, F>): TypeNode<C, Ptr<T>, { readonly kind: "pointer-type" } | F> =>
-    typeNode(pointerTypeClass, { kind: "pointer-type", to }),
+  array: <T extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char, F extends Facts, const N extends number>(
+    element: TypeNode<C, T, F>,
+    length: N & (number extends N ? never : unknown),
+  ): TypeNode<C, Tuple<T, N>, { readonly kind: "array-type" } | F> => {
+    if (!["int-type", "double-type", "char-type"].includes(element.kind)) throw new Error("array elements must be numeric or char")
+    if (!Number.isSafeInteger(length) || length <= 0) throw new Error("array length must be a positive safe integer")
+    return typeNode(arrayTypeClass, { kind: "array-type", element, length })
+  },
+  ptr: <T, F extends Facts>(
+    to: TypeNode<C, T, F> & (T extends readonly unknown[] ? never : unknown),
+  ): TypeNode<C, Ptr<T>, { readonly kind: "pointer-type" } | F> => {
+    if (to.kind === "array-type") throw new Error("pointer to array is not supported")
+    return typeNode(pointerTypeClass, { kind: "pointer-type", to })
+  },
 
-  literal: <D extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char, F extends Facts>(
+  literal: <
+    D extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char | readonly (I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char)[],
+    F extends Facts,
+  >(
     type: TypeNode<C, D, F>,
-    value: D extends Char ? string : D extends I64 | U64 ? bigint : number,
+    value: D extends readonly unknown[]
+      ? { readonly [K in keyof D]: D[K] extends infer T ? T extends Char ? string : T extends I64 | U64 ? bigint : number : never }
+      : D extends Char ? string
+      : D extends I64 | U64 ? bigint
+      : number,
   ): Expr<C, D, { readonly kind: "literal" } | F> => {
+    if (type.kind === "array-type") {
+      const node = fieldsOf<ArrayTypeNode>(type)
+      if (!Array.isArray(value) || value.length !== node.length) throw new Error("array literal needs exactly the declared length")
+      const values = Array.from(value, (item) => c.literal(node.element as TypeNode<C, I32>, item as number))
+      return expr(literalClass, { kind: "literal", value: Object.freeze(values) }, type)
+    }
     if (type.kind === "char-type" && (typeof value !== "string" || value.length !== 1 || value.charCodeAt(0) > 127)) {
       throw new Error(`char cannot hold the literal ${JSON.stringify(value)}`)
     }
@@ -233,6 +275,25 @@ export const c = {
 
   program: <Y extends Stmt<C, any, any>>(body: () => Generator<Y, void, unknown>): Program<C, KindsOf<Y>> => {
     const program = builder<C>()(body)
+    walk(program.root, (parent) => {
+      if (parent.kind === "function") {
+        const node = fieldsOf<FunctionNode>(parent)
+        if (node.returns.kind === "array-type" || node.params.some((param) => param.type.kind === "array-type")) {
+          throw new Error("array function parameters and results are not supported")
+        }
+      }
+      if (parent.kind === "let") {
+        const node = fieldsOf<LetNode>(parent)
+        if (node.type.kind === "array-type" && (node.init.kind !== "literal" || fieldsOf<Expr<C, unknown>>(node.init).type.kind !== "array-type")) {
+          throw new Error("array binding needs a direct array literal initializer")
+        }
+      }
+      children(parent).forEach((child) => {
+        if (child.role !== "expr" || fieldsOf<Expr<C, unknown>>(child).type.kind !== "array-type") return
+        if (parent.kind === "let" && fieldsOf<LetNode>(parent).init === child && child.kind === "literal") return
+        throw new Error("whole array use is not supported")
+      })
+    })
     program.root.statements.forEach((statement) => {
       if (statement.kind === "let") {
         const node = fieldsOf<LetNode>(statement)
@@ -284,7 +345,13 @@ const charSpelling = (value: string): string => {
   return CHAR_ESCAPES.get(value) ?? (code < 32 || code === 127 ? `\\${code.toString(8).padStart(3, "0")}` : value)
 }
 
-const declaration = (type: TypeNode<C, unknown>, name: string, emit: Parameters<Handler>[1]): string => `${emit.node(type).text} ${name}`
+const declaration = (type: TypeNode<C, unknown>, name: string, emit: Parameters<Handler>[1]): string => {
+  if (type.kind === "array-type") {
+    const node = fieldsOf<ArrayTypeNode>(type)
+    return `${emit.node(node.element).text} ${name}[${node.length}]`
+  }
+  return `${emit.node(type).text} ${name}`
+}
 
 export const cTarget = defineTarget(
   {
@@ -298,11 +365,14 @@ export const cTarget = defineTarget(
     "bool-type": () => "bool",
     "char-type": () => "char",
     "void-type": () => "void",
+    "array-type": (node: ArrayTypeNode, emit) => emit.node(node.element).text,
     "pointer-type": (node: PointerTypeNode, emit) => `${emit.node(node.to).text}*`,
-    literal: (node: LiteralNode): Fragment => {
+    literal: (node: LiteralNode, emit): Fragment => {
       const { value } = node
+      if (Array.isArray(value)) return frag(POSTFIX, `{${value.map((item) => emit.node(item).text).join(", ")}}`)
       if (typeof value === "boolean") return frag(POSTFIX, String(value))
       if (typeof value === "string") return frag(POSTFIX, `'${charSpelling(value)}'`)
+      if (typeof value !== "number" && typeof value !== "bigint") throw new Error("numeric literal needs a number")
       if (node.type.kind === "int-type") {
         const type = node.type as unknown as IntTypeNode
         if (typeof value === "bigint") {

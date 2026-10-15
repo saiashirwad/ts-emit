@@ -516,3 +516,74 @@ test("C rejects escaped references and preserves distinct binding names", () => 
   })
   assert.match(emitC(program), /int32_t value = 1;\nint32_t value_2 = 2;\nint32_t\* pointer = &value;/)
 })
+
+test("C arrays denote exact readonly tuples and print checked scalar literals", () => {
+  const type = c.array(c.i32, 2)
+  const literal = c.literal(type, [1, -2147483648])
+  assertType<Equal<lang.Denotes<typeof type>, readonly [I32, I32]>>()
+  assertType<Equal<lang.Denotes<typeof literal>, readonly [I32, I32]>>()
+  const union = c.array(c.i32, 1 as 1 | 2)
+  assertType<Equal<lang.Denotes<typeof union>, readonly [I32] | readonly [I32, I32]>>()
+  assertType<Equal<import("../languages/c.ts").Tuple<I32, number>, never>>()
+  assertType<Equal<import("../languages/c.ts").Tuple<I32, 0 | -1 | 1.5>, never>>()
+  const program = c.program(function*() {
+    yield* c.let("values", literal, type)
+    yield* c.let("letters", c.literal(c.array(c.char, 3), ["'", "\n", "\0"]), c.array(c.char, 3))
+    yield* c.let("wide", c.literal(c.array(c.i64, 2), [-(1n << 63n), 9007199254740993n]), c.array(c.i64, 2))
+    yield* c.fn("local", [], c.void, function*() {
+      yield* c.let("values", literal, type)
+    })
+  })
+  assert.equal(
+    emitC(program),
+    `#include <stdbool.h>
+#include <stdint.h>
+
+int32_t values[2] = {1, INT32_MIN};
+char letters[3] = {'\\'', '\\n', '\\000'};
+int64_t wide[2] = {INT64_MIN, INT64_C(9007199254740993)};
+void local(void) {
+  int32_t values_2[2] = {1, INT32_MIN};
+}
+`,
+  )
+  for (const length of [0, -1, 0.5, NaN, Infinity, 2 ** 53]) {
+    assert.throws(() => c.array(c.i32, length as never), /positive safe integer/)
+  }
+  for (const element of [c.bool, c.void, c.ptr(c.i32), type]) {
+    assert.throws(() => c.array(element as never, 2), /numeric or char/)
+  }
+  assert.throws(() => c.ptr(type as never), /pointer to array/)
+  assert.throws(() => c.literal(type, [1] as never), /exactly the declared length/)
+  assert.throws(() => c.literal(c.array(c.u8, 1), [256]), /cannot hold the literal/)
+  assert.throws(() => c.literal(c.array(c.char, 1), ["é"]), /cannot hold the literal/)
+  assert.throws(() => c.literal(c.array(c.i64, 1), [1] as never), /cannot hold the literal/)
+})
+
+test("C rejects each whole-array occurrence, even when a literal also initializes a binding", () => {
+  const type = c.array(c.i32, 2)
+  const literal = c.literal(type, [1, 2])
+  for (const use of ["run", "return", "assign", "copy", "address", "ternary", "literal-return"] as const) {
+    assert.throws(() =>
+      c.program(function*() {
+        const array = yield* c.let("values", literal, type)
+        yield* c.fn("invalid", [], c.void, function*() {
+          if (use === "run") yield* c.run(literal)
+          if (use === "return") yield* (c.return(array) as lang.Stmt<C>)
+          if (use === "literal-return") yield* (c.return(literal) as lang.Stmt<C>)
+          if (use === "assign") yield* c.assign(array, literal)
+          if (use === "copy") yield* c.let("copy", array, type)
+          if (use === "address") yield* c.run(c.address(array))
+          if (use === "ternary") yield* c.let("copy", c.ternary(c.true, literal, literal), type)
+        })
+      }), /array/)
+  }
+  assert.throws(() =>
+    c.program(function*() {
+      yield* c.fn("invalid", [], type, function*() {})
+    }), /array function parameters and results/)
+  assert.throws(() =>
+    c.program(function*() {
+      yield* c.fn("invalid", [c.param("values", type)], c.void, function*() {})
+    }), /array function parameters/)
+})

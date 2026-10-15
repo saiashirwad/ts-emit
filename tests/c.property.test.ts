@@ -106,3 +106,50 @@ ${calls}
     options,
   )
 })
+
+test("C array initializers preserve numeric bounds and ASCII elements", () => {
+  fc.assert(
+    fc.property(fc.tuple(...integers.map((type) => value(type))), fc.integer({ min: 0, max: 127 }), (values, code) => {
+      const program = c.program(function*() {
+        for (const [index, type] of integers.entries()) {
+          const raw = type.bits === 64 ? values[index]! : Number(values[index]!)
+          const array = c.array(typeNode(type), 2)
+          yield* c.let(`values_${index}`, c.literal(array, [raw, raw]), array)
+        }
+        const chars = c.array(c.char, 2)
+        yield* c.let("letters", c.literal(chars, [String.fromCharCode(code), "\n"]), chars)
+        const doubles = c.array(c.f64, 2)
+        yield* c.let("doubles", c.literal(doubles, [-0, 1.5]), doubles)
+      })
+      const checks = integers.map((type, index) => {
+        const expected = values[index]!
+        const spelling = expected === -(1n << 63n)
+          ? "INT64_MIN"
+          : `${expected < 0n ? "-" : ""}${type.signed ? "INT64_C" : "UINT64_C"}(${expected < 0n ? -expected : expected})`
+        return `values_${index}[0] == ${spelling} && values_${index}[1] == ${spelling}`
+      })
+      const source = `${emitC(program)}
+#include <math.h>
+int main(void) {
+  return ${checks.join(" && ")} && letters[0] == ${code} && letters[1] == 10
+    && signbit(doubles[0]) && doubles[1] == 1.5 ? 0 : 1;
+}
+`
+      const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-array-"))
+      try {
+        const path = join(directory, "program.c")
+        const executable = join(directory, "program")
+        writeFileSync(path, source)
+        const compiled = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", path, "-o", executable], { encoding: "utf8", timeout: 10_000 })
+        assert.ifError(compiled.error)
+        assert.equal(compiled.status, 0, `${compiled.stderr}\n${source}`)
+        const executed = spawnSync(executable, [], { encoding: "utf8", timeout: 5_000 })
+        assert.ifError(executed.error)
+        assert.equal(executed.status, 0, source)
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    }),
+    options,
+  )
+})
