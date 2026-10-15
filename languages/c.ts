@@ -30,6 +30,7 @@ import {
   type Ref,
   ref,
   type RuntimeType,
+  scope,
   type Stmt,
   stmt,
   stmtClass,
@@ -139,11 +140,15 @@ export interface CastNode {
   readonly operand: Expr<C, unknown>
   readonly type: TypeNode<C, unknown>
 }
-export interface UnwrapNode {
-  readonly kind: "unwrap"
-  readonly value: Ref<C, unknown>
+export interface BindNode {
+  readonly kind: "bind"
+  readonly value: Expr<C, unknown>
   readonly binding: Binding
   readonly type: TypeNode<C, unknown>
+  readonly body: Block | undefined
+}
+export interface MaybeNode {
+  readonly kind: "maybe"
   readonly body: Block
 }
 export interface DeferNode {
@@ -170,7 +175,11 @@ const literalClass = exprClass<LiteralNode>({ children: (node) => Array.isArray(
 const unaryClass = exprClass<UnaryNode>({ children: (node) => [node.operand] })
 const indexClass = exprClass<IndexNode>({ children: (node) => [node.array, node.at] })
 const castClass = exprClass<CastNode>({ children: (node) => [node.operand] })
-const unwrapClass = stmtClass<UnwrapNode>({ children: (node) => [node.value, node.type, node.body] })
+const bindClass = stmtClass<BindNode>({
+  children: (node) => [node.value, node.type, ...(node.body === undefined ? [] : [node.body])],
+  declares: (node) => node.body === undefined ? [node.binding] : [],
+})
+const maybeClass = stmtClass<MaybeNode>({ children: (node) => [node.body] })
 const deferClass = stmtClass<DeferNode>({ children: (node) => [node.body], declares: (node) => [node.result] })
 const ternaryClass = exprClass<TernaryNode>({ children: (node) => [node.condition, node.then, node.otherwise] })
 
@@ -187,6 +196,21 @@ const isArithmeticConstant = (node: AnyNode): boolean =>
     && isArithmeticConstant(fieldsOf<BinaryNode>(node).right))
   || (node.kind === "ternary" && [fieldsOf<TernaryNode>(node).condition, fieldsOf<TernaryNode>(node).then, fieldsOf<TernaryNode>(node).otherwise]
     .every(isArithmeticConstant))
+
+const nested = (statements: ReadonlyArray<AnyNode>, binds: ReadonlyArray<Binding>): Block => {
+  const at = statements.findIndex((statement) => statement.kind === "bind")
+  const found = statements[at]
+  if (found === undefined) return scope(binds, statements)
+  const node = fieldsOf<BindNode>(found)
+  const inner = stmt(bindClass, {
+    kind: "bind",
+    value: node.value,
+    binding: node.binding,
+    type: node.type,
+    body: nested(statements.slice(at + 1), [node.binding]),
+  })
+  return scope(binds, [...statements.slice(0, at), inner])
+}
 
 const isAddressConstant = (node: AnyNode): boolean => node.kind === "address" && fieldsOf<UnaryNode>(node).operand.kind === "ref"
 
@@ -336,18 +360,17 @@ export const c = {
       { readonly kind: "deref" } | F
     >
   },
-  unwrap: <D, Y extends Stmt<C, any, any>>(
-    value: Ref<C, D> & ([D] extends [Ptr<unknown> | null] ? (null extends D ? unknown : never) : never),
+  bind: <D, F extends Facts>(
     nameHint: string,
-    body: (pointer: Ref<C, NonNullable<D>>) => Generator<Y, void, unknown>,
-  ): Stmt<C, { readonly kind: "unwrap" | "ref" } | FactsOf<Y>> => {
-    if (value.kind !== "ref") throw new Error("unwrap needs a binding")
-    if (value.type.kind !== "nullable-type") throw new Error("unwrap needs a nullable pointer")
+    value: Expr<C, D, F> & ([D] extends [Ptr<unknown> | null] ? (null extends D ? unknown : never) : never),
+  ): Stmt<C, { readonly kind: "bind" | "ref" } | F, Ref<C, NonNullable<D>>> => {
+    if (value.type.kind !== "nullable-type") throw new Error("bind needs a nullable pointer")
     const declared = binding(nameHint)
     const type = fieldsOf<NullableTypeNode>(value.type).to
-    const block = drain(() => body(ref(declared, type)), [declared]).block
-    return stmt(unwrapClass, { kind: "unwrap", value, binding: declared, type, body: block })
+    return stmt(bindClass, { kind: "bind", value, binding: declared, type, body: undefined }, ref<C, NonNullable<D>>(declared, type))
   },
+  maybe: <Y extends Stmt<C, any, any>>(body: Body<C, Y>): Stmt<C, { readonly kind: "maybe" } | FactsOf<Y>> =>
+    stmt(maybeClass, { kind: "maybe", body: nested(drain(body).block.statements, []) }),
   defer: <Y extends Stmt<C, any, any>>(body: Body<C, Y>): Stmt<C, { readonly kind: "defer" } | FactsOf<Y>> =>
     stmt(deferClass, { kind: "defer", body: drain(body).block, result: binding("result") }),
 
@@ -359,6 +382,9 @@ export const c = {
         if (node.returns.kind === "array-type" || node.params.some((param) => param.type.kind === "array-type")) {
           throw new Error("array function parameters and results are not supported")
         }
+      }
+      if (parent.kind === "bind" && fieldsOf<BindNode>(parent).body === undefined) {
+        throw new Error("\"bind\" must be directly inside \"maybe\"")
       }
       if (parent.kind === "defer") {
         walk(fieldsOf<DeferNode>(parent).body, (node) => {
@@ -523,11 +549,12 @@ export const cTarget = defineTarget(
       const then = `if (${emit.node(node.condition).text}) ${braces(body(node.then, emit))}`
       return node.else === undefined ? then : `${then} else ${braces(body(node.else, emit))}`
     },
-    unwrap: (node: UnwrapNode, emit) => {
+    bind: (node: BindNode, emit) => {
+      if (node.body === undefined) throw new Error("\"bind\" must be directly inside \"maybe\"")
       const name = emit.name(node.binding)
-      const value = emit.node(node.value).text
-      return `if (${value} != NULL) ${braces([`${declaration(node.type, name, emit)} = ${value};`, ...body(node.body, emit)])}`
+      return `${declaration(node.type, name, emit)} = ${emit.node(node.value).text};\nif (${name} != NULL) ${braces(body(node.body, emit))}`
     },
+    maybe: (node: MaybeNode, emit) => braces(body(node.body, emit)),
     while: (node: WhileNode, emit) => `while (${emit.node(node.condition).text}) ${braces(body(node.body, emit))}`,
     defer: () => "",
     return: (node: ReturnNode, emit) => {

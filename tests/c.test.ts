@@ -493,30 +493,39 @@ test("C nullable pointers hold null, accept pointers, and cannot be dereferenced
   }
 })
 
-test("C unwrap runs its body only for a non-null binding, with a scoped non-null pointer", () => {
+test("C maybe skips the rest of its body once a bind meets null, with flat non-null bindings", () => {
   const nullable = c.nullable(c.ptr(c.i32))
   const program = c.program(function*() {
     const value = yield* c.let("value", i32(40), c.i32)
+    const trace = yield* c.let("trace", i32(0), c.i32)
     yield* c.fn("main", [], c.i32, function*() {
       const empty = yield* c.let("empty", c.null(nullable), nullable)
       const pointer = yield* c.let("pointer", c.address(value), nullable)
-      yield* c.unwrap(empty, "found", function*(found) {
+      yield* c.maybe(function*() {
+        yield* c.defer(function*() {
+          yield* c.assign(trace, c.add(trace, i32(1)))
+        })
+        const found = yield* c.bind("found", pointer)
+        const missing = yield* c.bind("missing", empty)
         yield* c.assign(c.deref(found), i32(0))
+        yield* c.assign(c.deref(missing), i32(0))
       })
-      yield* c.unwrap(pointer, "pointer", function*(found) {
+      yield* c.maybe(function*() {
+        const found = yield* c.bind("found", pointer)
         assertType<Equal<lang.Denotes<typeof found>, Ptr<I32>>>()
-        yield* c.assign(c.deref(found), c.add(c.deref(found), i32(2)))
+        yield* c.assign(c.deref(found), c.add(c.deref(found), i32(1)))
+        yield* c.return(c.add(c.deref(found), trace))
       })
-      // @ts-expect-error only a nullable pointer can be unwrapped
-      assert.throws(() => c.unwrap(value, "found", function*() {}), /unwrap needs a nullable pointer/)
-      // @ts-expect-error only a binding can be unwrapped, so its value is read once
-      assert.throws(() => c.unwrap(c.null(nullable), "found", function*() {}), /unwrap needs a binding/)
-      yield* c.return(c.deref(c.address(value)))
+      // @ts-expect-error only a nullable pointer can be bound
+      assert.throws(() => c.bind("found", value), /bind needs a nullable pointer/)
+      yield* c.return(i32(1))
     })
   })
   const emitted = emitC(program)
-  assert.match(emitted, /if \(empty != NULL\) \{\n    int32_t\* found = empty;\n    \*found = 0;\n  \}/)
-  assert.match(emitted, /if \(pointer != NULL\) \{\n    int32_t\* pointer_2 = pointer;\n/)
+  assert.match(
+    emitted,
+    /\{\n    int32_t\* found = pointer;\n    if \(found != NULL\) \{\n      int32_t\* missing = empty;\n      if \(missing != NULL\) \{\n        \*found = 0;\n        \*missing = 0;\n      \}\n    \}\n    trace = trace \+ 1;\n  \}/,
+  )
   const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-"))
   try {
     const source = join(directory, "program.c")
@@ -531,6 +540,28 @@ test("C unwrap runs its body only for a non-null binding, with a scoped non-null
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test("C bind must be directly inside maybe", () => {
+  const nullable = c.nullable(c.ptr(c.i32))
+  assert.throws(() =>
+    c.program(function*() {
+      yield* c.fn("outside", [], c.void, function*() {
+        const empty = yield* c.let("empty", c.null(nullable), nullable)
+        yield* c.bind("found", empty)
+      })
+    }), /"bind" must be directly inside "maybe"/)
+  assert.throws(() =>
+    c.program(function*() {
+      yield* c.fn("nested", [], c.void, function*() {
+        const empty = yield* c.let("empty", c.null(nullable), nullable)
+        yield* c.maybe(function*() {
+          yield* c.if(c.true, function*() {
+            yield* c.bind("found", empty)
+          })
+        })
+      })
+    }), /"bind" must be directly inside "maybe"/)
 })
 
 test("C executes assignment through pointers, loops, and typed calls", () => {
