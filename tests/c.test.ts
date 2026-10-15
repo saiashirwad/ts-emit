@@ -1006,3 +1006,73 @@ test("C allocators pass through function arguments and nowhere else", () => {
   // @ts-expect-error a pointer to an allocator is not supported
   assert.throws(() => c.ptr(c.allocator), /an allocator can only be passed as an argument/)
 })
+
+test("C rejects arena and allocator pointers that escape their lifetime", () => {
+  const nullable = c.nullable(c.ptr(c.i32))
+  const escapes = (
+    message: RegExp,
+    body: (outer: lang.Ref<C, Ptr<I32> | null>, scratch: lang.Ref<C, Allocator>) => Generator<lang.Stmt<C, lang.Facts, unknown>, void, unknown>,
+  ) =>
+    assert.throws(() =>
+      c.program(function*() {
+        yield* c.fn("main", [], c.void, function*() {
+          const outer = yield* c.let("outer", c.null(nullable), nullable)
+          yield* c.arena("scratch", 16, (scratch) => body(outer, scratch))
+        })
+      }), message)
+  const outlives = /a pointer from arena "scratch" cannot outlive it/
+  escapes(outlives, function*(outer, scratch) {
+    yield* c.assign(outer, c.new(scratch, i32(1)))
+  })
+  escapes(outlives, function*(outer, scratch) {
+    const inner = yield* c.let("inner", c.new(scratch, i32(1)), nullable)
+    yield* c.while(c.true, function*() {
+      yield* c.assign(outer, inner)
+    })
+  })
+  escapes(/a pointer from arena "scratch" cannot be stored through a pointer/, function*(outer, scratch) {
+    const slot = yield* c.let("slot", c.address(outer), c.ptr(nullable))
+    yield* c.assign(c.deref(slot), c.new(scratch, i32(1)))
+  })
+  assert.throws(() =>
+    c.program(function*() {
+      const kept = yield* c.let("kept", c.null(nullable), nullable)
+      const newCounter = yield* c.fn("newCounter", [c.param("allocator", c.allocator)], nullable, function*(allocator) {
+        yield* c.return(c.new(allocator, i32(0)))
+      })
+      yield* c.fn("main", [], c.void, function*() {
+        yield* c.arena("scratch", 16, function*(scratch) {
+          yield* c.assign(kept, c.call(newCounter, scratch))
+        })
+      })
+    }), outlives)
+  assert.throws(() =>
+    c.program(function*() {
+      yield* c.fn("leak", [], nullable, function*() {
+        yield* c.arena("scratch", 16, function*(scratch) {
+          yield* c.return(c.new(scratch, i32(1)))
+        })
+        yield* c.return(c.null(nullable))
+      })
+    }), outlives)
+  assert.throws(() =>
+    c.program(function*() {
+      const kept = yield* c.let("kept", c.null(nullable), nullable)
+      yield* c.fn("keep", [c.param("allocator", c.allocator)], c.void, function*(allocator) {
+        yield* c.assign(kept, c.new(allocator, i32(0)))
+      })
+    }), /a pointer from allocator "allocator" can only be returned or kept in a local binding/)
+
+  c.program(function*() {
+    yield* c.fn("main", [], c.i32, function*() {
+      yield* c.arena("scratch", 16, function*(scratch) {
+        const inner = yield* c.let("inner", c.new(scratch, i32(1)), nullable)
+        yield* c.maybe(function*() {
+          const found = yield* c.bind("found", inner)
+          yield* c.return(c.deref(found))
+        })
+      })
+      yield* c.return(i32(0))
+    })
+  })
+})

@@ -3,6 +3,7 @@ import {
   type AnyNode,
   type Binding,
   binding,
+  type BindingId,
   type Block,
   type Body,
   braces,
@@ -232,6 +233,88 @@ const nested = (statements: ReadonlyArray<AnyNode>, binds: ReadonlyArray<Binding
     body: nested(statements.slice(at + 1), [node.binding]),
   })
   return scope(binds, [...statements.slice(0, at), inner])
+}
+
+interface Source {
+  readonly binding: Binding
+  readonly arena: boolean
+}
+
+// Origins are the arenas and allocator parameters a pointer may come from.
+// They are tracked per function, flow-insensitively, and only through pointer and allocator expressions.
+const checkEscapes = (fn: FunctionNode): void => {
+  const sources = new Map<BindingId, Source>()
+  const inside = new Map<BindingId, ReadonlySet<BindingId>>()
+  const flows: Array<readonly [Binding, AnyNode]> = []
+  const stores: AnyNode[] = []
+  const returns: AnyNode[] = []
+  fn.params.forEach((param) => {
+    inside.set(param.binding.id, new Set())
+    if (param.type.kind === "allocator-type") sources.set(param.binding.id, { binding: param.binding, arena: false })
+  })
+  const visit = (node: AnyNode, arenas: ReadonlySet<BindingId>): void => {
+    if (node.kind === "arena") {
+      const arena = fieldsOf<ArenaNode>(node)
+      sources.set(arena.binding.id, { binding: arena.binding, arena: true })
+      return visit(arena.body, new Set([...arenas, arena.binding.id]))
+    }
+    if (node.kind === "let" || node.kind === "bind") {
+      const declared = node.kind === "let"
+        ? fieldsOf<LetNode>(node)
+        : { binding: fieldsOf<BindNode>(node).binding, init: fieldsOf<BindNode>(node).value }
+      inside.set(declared.binding.id, arenas)
+      flows.push([declared.binding, declared.init])
+    }
+    if (node.kind === "assign") {
+      const assigned = fieldsOf<AssignNode>(node)
+      if (assigned.target.kind === "ref") flows.push([fieldsOf<RefNode>(assigned.target).binding, assigned.value])
+      else stores.push(assigned.value)
+    }
+    if (node.kind === "return") returns.push(fieldsOf<ReturnNode>(node).value)
+    children(node).forEach((child) => visit(child, arenas))
+  }
+  visit(fn.body, new Set())
+  const held = new Map<BindingId, ReadonlySet<Source>>()
+  const origins = (node: AnyNode): ReadonlySet<Source> => {
+    if (node.role !== "expr" || !["pointer-type", "nullable-type", "allocator-type"].includes(fieldsOf<Expr<C, unknown>>(node).type.kind)) {
+      return new Set()
+    }
+    if (node.kind === "ref") {
+      const { id } = fieldsOf<RefNode>(node).binding
+      const found = sources.get(id)
+      return found === undefined ? held.get(id) ?? new Set() : new Set([found])
+    }
+    return new Set(children(node).flatMap((child) => [...origins(child)]))
+  }
+  for (let changed = true; changed;) {
+    changed = false
+    flows.forEach(([target, value]) => {
+      const before = held.get(target.id) ?? new Set()
+      const after = new Set([...before, ...origins(value)])
+      if (after.size !== before.size) {
+        held.set(target.id, after)
+        changed = true
+      }
+    })
+  }
+  flows.forEach(([target, value]) =>
+    origins(value).forEach(({ binding, arena }) => {
+      if (arena && inside.get(target.id)?.has(binding.id) !== true) throw new Error(`a pointer from arena "${binding.nameHint}" cannot outlive it`)
+      if (!arena && !inside.has(target.id)) {
+        throw new Error(`a pointer from allocator "${binding.nameHint}" can only be returned or kept in a local binding`)
+      }
+    })
+  )
+  stores.forEach((value) =>
+    origins(value).forEach(({ binding, arena }) => {
+      throw new Error(`a pointer from ${arena ? "arena" : "allocator"} "${binding.nameHint}" cannot be stored through a pointer`)
+    })
+  )
+  returns.forEach((value) =>
+    origins(value).forEach(({ binding, arena }) => {
+      if (arena) throw new Error(`a pointer from arena "${binding.nameHint}" cannot outlive it`)
+    })
+  )
 }
 
 const isAddressConstant = (node: AnyNode): boolean => node.kind === "address" && fieldsOf<UnaryNode>(node).operand.kind === "ref"
@@ -472,6 +555,7 @@ export const c = {
             throw new Error(`function "${fieldsOf<FunctionNode>(node).binding.nameHint}" cannot be nested in another function in C`)
           }
         })
+        checkEscapes(fieldsOf<FunctionNode>(statement))
       } else {
         throw new Error(`"${statement.kind}" cannot appear at the top level of a C program`)
       }
