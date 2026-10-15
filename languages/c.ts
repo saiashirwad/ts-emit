@@ -4,6 +4,7 @@ import {
   type Binding,
   binding,
   type Block,
+  type Body,
   braces,
   builder,
   type Check,
@@ -145,6 +146,11 @@ export interface UnwrapNode {
   readonly type: TypeNode<C, unknown>
   readonly body: Block
 }
+export interface DeferNode {
+  readonly kind: "defer"
+  readonly body: Block
+  readonly result: Binding
+}
 export interface TernaryNode {
   readonly kind: "ternary"
   readonly condition: Expr<C, boolean>
@@ -165,6 +171,7 @@ const unaryClass = exprClass<UnaryNode>({ children: (node) => [node.operand] })
 const indexClass = exprClass<IndexNode>({ children: (node) => [node.array, node.at] })
 const castClass = exprClass<CastNode>({ children: (node) => [node.operand] })
 const unwrapClass = stmtClass<UnwrapNode>({ children: (node) => [node.value, node.type, node.body] })
+const deferClass = stmtClass<DeferNode>({ children: (node) => [node.body], declares: (node) => [node.result] })
 const ternaryClass = exprClass<TernaryNode>({ children: (node) => [node.condition, node.then, node.otherwise] })
 
 type IntFacts = { readonly kind: "int-type" }
@@ -341,6 +348,8 @@ export const c = {
     const block = drain(() => body(ref(declared, type)), [declared]).block
     return stmt(unwrapClass, { kind: "unwrap", value, binding: declared, type, body: block })
   },
+  defer: <Y extends Stmt<C, any, any>>(body: Body<C, Y>): Stmt<C, { readonly kind: "defer" } | FactsOf<Y>> =>
+    stmt(deferClass, { kind: "defer", body: drain(body).block, result: binding("result") }),
 
   program: <Y extends Stmt<C, any, any>>(body: () => Generator<Y, void, unknown>): Program<C, KindsOf<Y>> => {
     const program = builder<C>()(body)
@@ -350,6 +359,12 @@ export const c = {
         if (node.returns.kind === "array-type" || node.params.some((param) => param.type.kind === "array-type")) {
           throw new Error("array function parameters and results are not supported")
         }
+      }
+      if (parent.kind === "defer") {
+        walk(fieldsOf<DeferNode>(parent).body, (node) => {
+          if (node.kind === "return") throw new Error("\"return\" cannot appear inside \"defer\"")
+          if (node.kind === "defer") throw new Error("\"defer\" cannot appear inside \"defer\"")
+        })
       }
       if (parent.kind === "let") {
         const node = fieldsOf<LetNode>(parent)
@@ -413,6 +428,15 @@ const CHAR_ESCAPES = new Map([["'", "\\'"], ["\\", "\\\\"], ["\n", "\\n"], ["\t"
 const charSpelling = (value: string): string => {
   const code = value.charCodeAt(0)
   return CHAR_ESCAPES.get(value) ?? (code < 32 || code === 127 ? `\\${code.toString(8).padStart(3, "0")}` : value)
+}
+
+const deferredIn = (statements: ReadonlyArray<AnyNode>): DeferNode[] =>
+  statements.filter((statement) => statement.kind === "defer").map((statement) => fieldsOf<DeferNode>(statement)).reverse()
+
+const body = (block: Block, emit: Parameters<Handler>[1]): string[] => {
+  const lines = emit.block(block)
+  if (block.statements.at(-1)?.kind === "return") return lines
+  return [...lines, ...deferredIn(block.statements).flatMap((deferred) => emit.block(deferred.body))]
 }
 
 const declaration = (type: TypeNode<C, unknown>, name: string, emit: Parameters<Handler>[1]): string => {
@@ -496,20 +520,29 @@ export const cTarget = defineTarget(
     assign: (node: AssignNode, emit) => `${emit.node(node.target).text} = ${emit.node(node.value).text};`,
     expression: (node: ExpressionNode, emit) => `${emit.node(node.expr).text};`,
     if: (node: IfNode, emit) => {
-      const then = `if (${emit.node(node.condition).text}) ${braces(emit.block(node.then))}`
-      return node.else === undefined ? then : `${then} else ${braces(emit.block(node.else))}`
+      const then = `if (${emit.node(node.condition).text}) ${braces(body(node.then, emit))}`
+      return node.else === undefined ? then : `${then} else ${braces(body(node.else, emit))}`
     },
     unwrap: (node: UnwrapNode, emit) => {
       const name = emit.name(node.binding)
       const value = emit.node(node.value).text
-      return `if (${value} != NULL) ${braces([`${declaration(node.type, name, emit)} = ${value};`, ...emit.block(node.body)])}`
+      return `if (${value} != NULL) ${braces([`${declaration(node.type, name, emit)} = ${value};`, ...body(node.body, emit)])}`
     },
-    while: (node: WhileNode, emit) => `while (${emit.node(node.condition).text}) ${braces(emit.block(node.body))}`,
-    return: (node: ReturnNode, emit) => `return ${emit.node(node.value).text};`,
+    while: (node: WhileNode, emit) => `while (${emit.node(node.condition).text}) ${braces(body(node.body, emit))}`,
+    defer: () => "",
+    return: (node: ReturnNode, emit) => {
+      const value = emit.node(node.value).text
+      const live = [...emit.scopes].reverse().flatMap(deferredIn)
+      const [innermost] = live
+      if (innermost === undefined) return `return ${value};`
+      const result = emit.name(innermost.result)
+      const type = emit.node(fieldsOf<Expr<C, unknown>>(node.value).type as TypeNode<C, unknown>).text
+      return [`${type} ${result} = ${value};`, ...live.flatMap((deferred) => emit.block(deferred.body)), `return ${result};`].join("\n")
+    },
     function: (node: FunctionNode, emit) => {
       const params = node.params.map((param) => declaration(param.type as TypeNode<C, unknown>, emit.name(param.binding), emit))
       return `${emit.node(node.returns).text} ${emit.name(node.binding)}(${params.length === 0 ? "void" : params.join(", ")}) ${
-        braces(emit.block(node.body))
+        braces(body(node.body, emit))
       }`
     },
   },

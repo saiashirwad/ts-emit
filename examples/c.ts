@@ -56,6 +56,9 @@ export const program = c.program(function*() {
   })
 
   yield* c.fn("main", [], c.i32, function*() {
+    yield* c.defer(function*() {
+      yield* c.assign(calls, i32(0))
+    })
     const largest = yield* c.let("largest", c.literal(c.i64, 0n), c.i64)
     const i = yield* c.let("i", i32(0), c.i32)
     yield* c.while(c.less(i, i32(12)), function*() {

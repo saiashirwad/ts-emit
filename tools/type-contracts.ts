@@ -102,6 +102,7 @@ const cases = [
     valid: "declare const m: Ref<C, Ptr<I32> | null>; c.unwrap(m, \"q\", function*() {})",
     invalid: "declare const m: Expr<C, Ptr<I32> | null>; c.unwrap(m, \"q\", function*() {})",
   },
+  { name: "defer needs a generator body", valid: "c.defer(function*() {})", invalid: "c.defer(function() {})" },
   { name: "void pointer dereference", valid: "c.deref(p)", invalid: "declare const v: Expr<C, Ptr<Void>>; c.deref(v)" },
   { name: "address of an lvalue", valid: "c.address(c.deref(p))", invalid: "c.address(c.literal(c.i32, 1))" },
   { name: "assignment through a pointer", valid: "c.assign(c.deref(p), n)", invalid: "c.assign(p, n)" },

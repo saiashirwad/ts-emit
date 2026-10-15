@@ -728,7 +728,7 @@ test("the C example swaps array elements through typed pointer arguments", () =>
   assert.match(emitted.stdout, /int32_t values\[2\] = \{7, 3\};/)
   assert.match(emitted.stdout, /bool outOfOrder = values\[1\] < values\[0\];/)
   assert.match(emitted.stdout, /swap\(&values\[0\], &values\[1\]\);/)
-  assert.match(emitted.stdout, /return values\[0\] < values\[1\] \? 0 : 1;/)
+  assert.match(emitted.stdout, /int32_t result = values\[0\] < values\[1\] \? 0 : 1;\n  calls = 0;\n  return result;/)
 })
 
 test("C indexing checks types and literal bounds but leaves expressions unchecked", () => {
@@ -754,4 +754,88 @@ test("C indexing checks types and literal bounds but leaves expressions unchecke
       yield* c.return(c.index(array, at))
     })
   })
+})
+
+test("C defer runs at every exit from its block, newest first, after the return value is copied", () => {
+  const program = c.program(function*() {
+    const trace = yield* c.let("trace", i32(0), c.i32)
+    const run = yield* c.fn("run", [], c.i32, function*() {
+      const result = yield* c.let("result", i32(40), c.i32)
+      yield* c.defer(function*() {
+        yield* c.assign(trace, i32(1))
+      })
+      yield* c.defer(function*() {
+        yield* c.assign(trace, i32(2))
+      })
+      yield* c.defer(function*() {
+        yield* c.assign(result, i32(0))
+      })
+      yield* c.return(result)
+    })
+    const early = yield* c.fn("early", [c.param("n", c.i32)], c.i32, function*(n) {
+      yield* c.defer(function*() {
+        yield* c.assign(trace, i32(5))
+      })
+      yield* c.if(c.less(n, i32(1)), function*() {
+        yield* c.return(i32(7))
+      })
+      yield* c.defer(function*() {
+        yield* c.assign(trace, i32(100))
+      })
+      yield* c.return(i32(8))
+    })
+    const fall = yield* c.fn("fall", [], c.void, function*() {
+      yield* c.defer(function*() {
+        yield* c.assign(trace, i32(9))
+      })
+      yield* c.assign(trace, i32(0))
+    })
+    yield* c.fn("main", [], c.i32, function*() {
+      const a = yield* c.let("a", c.call(run), c.i32)
+      const b = yield* c.let("b", c.call(early, i32(0)), c.i32)
+      yield* c.if(c.less(trace, i32(5)), function*() {
+        yield* c.return(i32(1))
+      })
+      yield* c.run(c.call(fall))
+      yield* c.return(c.add(c.add(a, b), trace))
+    })
+  })
+  const emitted = emitC(program)
+  assert.match(emitted, /int32_t result_4 = result;\n  result = 0;\n  trace = 2;\n  trace = 1;\n  return result_4;/)
+  assert.match(emitted, /if \(n < 1\) \{\n    int32_t result = 7;\n    trace = 5;\n    return result;\n  \}/)
+  assert.match(emitted, /trace = 0;\n  trace = 9;\n\}/)
+  const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-"))
+  try {
+    const source = join(directory, "program.c")
+    const executable = join(directory, "program")
+    writeFileSync(source, emitted)
+    const compiled = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", executable], { encoding: "utf8" })
+    assert.ifError(compiled.error)
+    assert.equal(compiled.status, 0, compiled.stderr)
+    const executed = spawnSync(executable, [], { encoding: "utf8" })
+    assert.ifError(executed.error)
+    assert.equal(executed.status, 56, executed.stderr)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("C defer rejects a return or a defer inside its body", () => {
+  assert.throws(() =>
+    c.program(function*() {
+      yield* c.fn("invalid", [], c.i32, function*() {
+        yield* c.defer(function*() {
+          yield* c.return(i32(0))
+        })
+        yield* c.return(i32(1))
+      })
+    }), /"return" cannot appear inside "defer"/)
+  assert.throws(() =>
+    c.program(function*() {
+      yield* c.fn("invalid", [], c.void, function*() {
+        yield* c.defer(function*() {
+          yield* c.defer(function*() {})
+        })
+      })
+    }), /"defer" cannot appear inside "defer"/)
 })
