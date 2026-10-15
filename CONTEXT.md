@@ -18,4 +18,10 @@ There is no TypeScript target, static evidence model, symbolic type evaluator, o
 
 ## Scope
 
-C supports fixed-width integers, double, bool, ASCII char, pointers, bindings, arithmetic, comparisons, ternaries, conditions, loops, functions, and calls. Conditions accept only bool. It does not prove memory safety or total return coverage. New constructs should name their data shape and add source and runtime checks before expanding shared abstractions.
+C supports fixed-width integers, double, bool, ASCII char, pointers, bindings, arithmetic, comparisons, ternaries, conditions, loops, functions, and calls. `I8`, `I16`, `I32`, `U8`, `U16`, `U32`, and `F64` are branded numbers. `I64` and `U64` are branded bigints, and their literals take bigint input. `Char` is a branded string with one ASCII character per literal. `Ptr<T>` carries a pointer brand and its pointee type. Bool denotes plain `boolean`, and conditions accept only bool.
+
+C has no implicit conversions or promotions. Assignment, call arguments, and returns require equal denotations. Numeric `add` and `less` require equal numeric types. Addition retains that type, including for integers narrower than 32 bits. Pointer plus integer, in either order, retains the pointer type.
+
+`c.cast(c.i32, value)` explicitly converts between numeric types only. Casts have no runtime range checks. Out-of-range floating-to-integer casts have undefined behavior. Signed integer narrowing is implementation-defined. Unsigned integer narrowing wraps. These remain unchecked, like arithmetic overflow.
+
+C does not prove memory safety or total return coverage. New constructs should name their data shape and add source and runtime checks before expanding shared abstractions.
