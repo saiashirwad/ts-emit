@@ -74,9 +74,9 @@ test("C integer arithmetic agrees with an independent BigInt oracle", () => {
             // Bind narrow operands: bare 8/16-bit literals would instead have C's plain int type.
             const left = yield* c.let("left", c.literal(typeNode(item.left), item.left.value), typeNode(item.left))
             const right = yield* c.let("right", c.literal(typeNode(item.right), item.right.value), typeNode(item.right))
-            const expression: Expr<C, Int, { readonly kind: "add" | "less" | "ref" }> = item.operation === "add"
+            const expression: Expr<C, Int, { readonly kind: "add" | "ternary" | "less" | "ref" | "literal" | "int-type" }> = item.operation === "add"
               ? c.add(left, right)
-              : c.less(left, right)
+              : c.ternary(c.less(left, right), c.literal(c.int(32), 1), c.literal(c.int(32), 0))
             assert.deepEqual(expression.type, typeNode(resultType))
             yield* c.return(expression)
           })

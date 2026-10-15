@@ -8,7 +8,7 @@ TypeScript builders emit C, Prolog, and Lua.
 
 `Structure` describes children, declarations, and references. Program construction rejects references outside their scope and duplicate binding identities. Targets assign valid, nonconflicting names and print nodes with precedence-aware fragments.
 
-Rules are type lambdas applied with `Kind`. C provides assignment, truthiness, addition, and comparison rules. Only an exact `true` accepts a check. Function types retain parameter and return types at runtime for calls.
+Rules are type lambdas applied with `Kind`. C provides assignment, condition, addition, and comparison rules. Only an exact `true` accepts a check. Function types retain parameter and return types at runtime for calls.
 
 There is no TypeScript target, static evidence model, symbolic type evaluator, or branch refinement machinery. Prolog and Lua use their own domain structures and do not depend on C's core.
 
@@ -18,4 +18,4 @@ There is no TypeScript target, static evidence model, symbolic type evaluator, o
 
 ## Scope
 
-C supports fixed-width integers, double, pointers, bindings, arithmetic, conditions, loops, functions, and calls. It does not prove memory safety or total return coverage. New constructs should name their data shape and add source and runtime checks before expanding shared abstractions.
+C supports fixed-width integers, double, bool, pointers, bindings, arithmetic, comparisons, ternaries, conditions, loops, functions, and calls. Conditions accept only bool. It does not prove memory safety or total return coverage. New constructs should name their data shape and add source and runtime checks before expanding shared abstractions.

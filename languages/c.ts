@@ -3,6 +3,7 @@ import {
   type AnyNode,
   braces,
   builder,
+  type Check,
   defineTarget,
   emit,
   type Equal,
@@ -49,7 +50,6 @@ export interface Void {
 }
 
 export type Arith = Int | Double
-export type Scalar = Arith | Ptr<unknown>
 
 type Wider<A extends Bits, B extends Bits> =
     A extends 64 ? 64
@@ -74,12 +74,13 @@ export type Converted<A, B> =
 
 export interface CAssign extends TypeLambda {
   readonly type: this["Args"] extends readonly [infer A, infer B]
-    ? [A, B] extends [Arith, Arith] ? true : [A, B] extends [Ptr<infer X>, Ptr<infer Y>] ? Equal<X, Y> : false
+    ? [A, B] extends [boolean, boolean] ? true
+    : [A, B] extends [Arith, Arith] ? true : [A, B] extends [Ptr<infer X>, Ptr<infer Y>] ? Equal<X, Y> : false
     : false
 }
 
 export interface CTruthy extends TypeLambda {
-  readonly type: this["Args"] extends readonly [infer T] ? ([T] extends [Scalar] ? true : false) : false
+  readonly type: this["Args"] extends readonly [infer T] ? ([T] extends [boolean] ? true : false) : false
 }
 
 export interface CSum extends TypeLambda {
@@ -89,7 +90,7 @@ export interface CSum extends TypeLambda {
 }
 
 export interface CCompare extends TypeLambda {
-  readonly type: this["Args"] extends readonly [infer A, infer B] ? [Converted<A, B>] extends [never] ? never : Int<32, true> : never
+  readonly type: this["Args"] extends readonly [infer A, infer B] ? [Converted<A, B>] extends [never] ? never : boolean : never
 }
 
 export interface C {
@@ -111,7 +112,7 @@ export interface PointerTypeNode {
 }
 export interface LiteralNode {
   readonly kind: "literal"
-  readonly value: number
+  readonly value: number | boolean
   readonly type: TypeNode<C, unknown>
 }
 export interface UnaryNode {
@@ -119,13 +120,21 @@ export interface UnaryNode {
   readonly operand: Expr<C, unknown>
   readonly lvalue?: true
 }
+export interface TernaryNode {
+  readonly kind: "ternary"
+  readonly condition: Expr<C, boolean>
+  readonly then: Expr<C, unknown>
+  readonly otherwise: Expr<C, unknown>
+}
 
 const intTypeClass = typeClass<IntTypeNode>()
 const doubleTypeClass = typeClass()
+const boolTypeClass = typeClass()
 const voidTypeClass = typeClass()
 const pointerTypeClass = typeClass<PointerTypeNode>({ children: (node) => [node.to] })
 const literalClass = exprClass<LiteralNode>()
 const unaryClass = exprClass<UnaryNode>({ children: (node) => [node.operand] })
+const ternaryClass = exprClass<TernaryNode>({ children: (node) => [node.condition, node.then, node.otherwise] })
 
 type IntFacts = { readonly kind: "int-type" }
 
@@ -137,6 +146,8 @@ const isArithmeticConstant = (node: AnyNode): boolean =>
   node.kind === "literal"
   || ((node.kind === "add" || node.kind === "less") && isArithmeticConstant(fieldsOf<BinaryNode>(node).left)
     && isArithmeticConstant(fieldsOf<BinaryNode>(node).right))
+  || (node.kind === "ternary" && [fieldsOf<TernaryNode>(node).condition, fieldsOf<TernaryNode>(node).then, fieldsOf<TernaryNode>(node).otherwise]
+    .every(isArithmeticConstant))
 
 const isAddressConstant = (node: AnyNode): boolean => {
   if (node.kind === "address") return fieldsOf<UnaryNode>(node).operand.kind === "ref"
@@ -165,11 +176,12 @@ export const c = {
   ...structured<C>(),
   ...functionConstruct<C>(),
   ...addConstruct<C>(converted),
-  ...lessConstruct<C>(() => intType(32, true)),
+  ...lessConstruct<C>((): RuntimeType => c.bool),
 
   int: <B extends Bits>(bits: B): TypeNode<C, Int<B, true>, IntFacts> => typeNode(intTypeClass, { kind: "int-type", bits, signed: true }),
   uint: <B extends Bits>(bits: B): TypeNode<C, Int<B, false>, IntFacts> => typeNode(intTypeClass, { kind: "int-type", bits, signed: false }),
   double: typeNode<C, Double, { readonly kind: "double-type" }>(doubleTypeClass, { kind: "double-type" }),
+  bool: typeNode<C, boolean, { readonly kind: "bool-type" }>(boolTypeClass, { kind: "bool-type" }),
   void: typeNode<C, Void, { readonly kind: "void-type" }>(voidTypeClass, { kind: "void-type" }),
   ptr: <T, F extends Facts>(to: TypeNode<C, T, F>): TypeNode<C, Ptr<T>, { readonly kind: "pointer-type" } | F> =>
     typeNode(pointerTypeClass, { kind: "pointer-type", to }),
@@ -185,6 +197,21 @@ export const c = {
     }
     return expr(literalClass, { kind: "literal", value }, type)
   },
+  true: expr<C, boolean, { readonly kind: "literal" | "bool-type" }>(
+    literalClass,
+    { kind: "literal", value: true },
+    typeNode(boolTypeClass, { kind: "bool-type" }),
+  ),
+  false: expr<C, boolean, { readonly kind: "literal" | "bool-type" }>(
+    literalClass,
+    { kind: "literal", value: false },
+    typeNode(boolTypeClass, { kind: "bool-type" }),
+  ),
+  ternary: <FC extends Facts, A, FA extends Facts, B, FB extends Facts>(
+    condition: Expr<C, boolean, FC>,
+    then: Expr<C, A, FA>,
+    otherwise: Expr<C, B, FB> & Check<Equal<A, B>, "branches have different types", { then: A; otherwise: B }>,
+  ): Expr<C, A, { readonly kind: "ternary" } | FC | FA | FB> => expr(ternaryClass, { kind: "ternary", condition, then, otherwise }, then.type),
   address: <D, F extends Facts>(operand: Lvalue<C, D, F>): Expr<C, Ptr<D>, { readonly kind: "address" } | F> => {
     if (!isLvalue(operand)) throw new Error("only an lvalue has an address")
     return expr(unaryClass, { kind: "address", operand }, typeNode(pointerTypeClass, { kind: "pointer-type", to: operand.type }))
@@ -225,7 +252,7 @@ export const c = {
 const KEYWORDS = (
   "auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return "
   + "short signed sizeof static struct switch typedef union unsigned void volatile while _Bool _Complex _Imaginary "
-  + "_Alignas _Alignof _Atomic _Generic _Noreturn _Static_assert _Thread_local"
+  + "bool true false _Alignas _Alignof _Atomic _Generic _Noreturn _Static_assert _Thread_local"
 ).split(" ")
 
 const STDINT = [
@@ -244,6 +271,7 @@ const POSTFIX = 15
 const MULTIPLY = 13
 const ADD = 12
 const RELATIONAL = 10
+const CONDITIONAL = 3
 
 const declaration = (type: TypeNode<C, unknown>, name: string, emit: Parameters<Handler>[1]): string => `${emit.node(type).text} ${name}`
 
@@ -256,10 +284,12 @@ export const cTarget = defineTarget(
   {
     "int-type": (node: IntTypeNode) => intName(node),
     "double-type": () => "double",
+    "bool-type": () => "bool",
     "void-type": () => "void",
     "pointer-type": (node: PointerTypeNode, emit) => `${emit.node(node.to).text}*`,
     literal: (node: LiteralNode): Fragment => {
       const { value } = node
+      if (typeof value === "boolean") return frag(POSTFIX, String(value))
       if (node.type.kind === "int-type") {
         const type = node.type as unknown as IntTypeNode
         if (type.bits === 32 && type.signed && value === -(2 ** 31)) return frag(POSTFIX, "INT32_MIN")
@@ -280,6 +310,10 @@ export const cTarget = defineTarget(
     deref: (node: UnaryNode, emit) => ({ prec: UNARY, text: `*${emit.at(node.operand, UNARY)}` }),
     add: (node: BinaryNode, emit) => ({ prec: ADD, text: `${emit.at(node.left, ADD)} + ${emit.at(node.right, ADD + 1)}` }),
     less: (node: BinaryNode, emit) => ({ prec: RELATIONAL, text: `${emit.at(node.left, RELATIONAL)} < ${emit.at(node.right, RELATIONAL + 1)}` }),
+    ternary: (node: TernaryNode, emit) => ({
+      prec: CONDITIONAL,
+      text: `${emit.at(node.condition, CONDITIONAL + 1)} ? ${emit.node(node.then).text} : ${emit.at(node.otherwise, CONDITIONAL)}`,
+    }),
     call: (node: CallNode, emit) => ({
       prec: POSTFIX,
       text: `${emit.at(node.callee, POSTFIX)}(${node.args.map((arg) => emit.node(arg).text).join(", ")})`,
@@ -303,4 +337,4 @@ export const cTarget = defineTarget(
 )
 
 export const emitC = <Kinds extends keyof typeof cTarget.handlers>(program: Program<C, Kinds>): string =>
-  `#include <stdint.h>\n\n${emit(program as Program<C, keyof typeof cTarget.handlers>, cTarget)}\n`
+  `#include <stdbool.h>\n#include <stdint.h>\n\n${emit(program as Program<C, keyof typeof cTarget.handlers>, cTarget)}\n`

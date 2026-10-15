@@ -24,7 +24,7 @@ export const conversionContracts = () => {
   const real = c.add(i32(1), f64(2))
   assertType<Equal<lang.Denotes<typeof real>, Double>>()
   const compared = c.less(i8(1), f64(2))
-  assertType<Equal<lang.Denotes<typeof compared>, Int<32, true>>>()
+  assertType<Equal<lang.Denotes<typeof compared>, boolean>>()
   assertType<Equal<Converted<Int<8, false>, Int<8, false>>, Int<32, true>>>()
   assertType<Equal<Converted<Int<16, false>, Int<32, true>>, Int<32, true>>>()
   assertType<Equal<Converted<Int<16, false>, Int<32, false>>, Int<32, false>>>()
@@ -63,7 +63,6 @@ export const conversionContracts = () => {
       c.add(p, f64(1))
       // @ts-expect-error a pointer cannot be compared with an int
       c.less(p, n)
-      yield* c.if(p, function*() {})
       yield* c.while(c.less(n, i32(10)), function*() {
         yield* c.assign(n, c.add(n, i32(1)))
       })
@@ -92,16 +91,13 @@ export const functionContracts = () => {
     c.call(square, i32(1), i32(2))
     // @ts-expect-error too few arguments
     c.call(square)
-    // @ts-expect-error a pointer is returned from a function declared to return an int, even from a nested branch
+    // @ts-expect-error a pointer is returned from a function declared to return an int
     yield* c.fn(
       "leak",
       [c.param("p", c.ptr(c.int(32)))],
       c.int(32),
       function*(p) {
-        yield* c.if(p, function*() {
-          yield* c.return(p)
-        })
-        yield* c.return(i32(0))
+        yield* c.return(p)
       },
     )
   })
@@ -135,7 +131,8 @@ test("emit requires a handler for every kind a program uses, nested kinds includ
 test("the C target emits C source", () => {
   assert.equal(
     emitC(counter()),
-    `#include <stdint.h>
+    `#include <stdbool.h>
+#include <stdint.h>
 
 int32_t count(int32_t limit) {
   int32_t i = 0;
@@ -156,7 +153,8 @@ int32_t count(int32_t limit) {
   })
   assert.equal(
     emitC(pointers),
-    `#include <stdint.h>
+    `#include <stdbool.h>
+#include <stdint.h>
 
 int32_t main(void) {
   double int_2 = 2.0;
@@ -178,7 +176,7 @@ test("C spells leading underscores safely and preserves collisions and reference
   })
   assert.equal(
     emitC(program),
-    "#include <stdint.h>\n\nint32_t binding_value = 1;\nint32_t binding_value_2 = 2;\nint32_t binding_ = 3;\nint32_t* first = &binding_value;\nint32_t* second = &binding_value_2;\n",
+    "#include <stdbool.h>\n#include <stdint.h>\n\nint32_t binding_value = 1;\nint32_t binding_value_2 = 2;\nint32_t binding_ = 3;\nint32_t* first = &binding_value;\nint32_t* second = &binding_value_2;\n",
   )
   for (const hint of ["_bad-name", "_\n", "_\r", "_\u2028", "_\u2029", "bad-name", "1value", ""]) {
     assert.throws(() =>
@@ -224,7 +222,7 @@ test("C compiles C11 keywords and reserved underscore names in every binding pos
 
 test("C literals are spelled with their declared type, and must fit it", () => {
   const program = c.program(function*() {
-    yield* c.let("int32_t", c.less(u32(1), i32(-1)), c.int(32))
+    yield* c.let("int32_t", c.less(u32(1), i32(-1)), c.bool)
     yield* c.let("INT64_C", c.add(c.literal(c.int(64), -5), c.literal(c.uint(64), 9007199254740991)), c.int(64))
     yield* c.let("min", i32(-2147483648), c.int(32))
     yield* c.let("small", c.add(c.literal(c.uint(16), 65535), c.literal(c.int(8), -128)), c.int(32))
@@ -232,13 +230,14 @@ test("C literals are spelled with their declared type, and must fit it", () => {
     yield* c.let("tiny", f64(-1.5e-7), c.double)
     yield* c.let("negativeZero", f64(-0), c.double)
     yield* c.let("notANumber", c.add(f64(NaN), f64(1)), c.double)
-    yield* c.let("infinity", c.less(f64(-Infinity), f64(Infinity)), c.double)
+    yield* c.let("infinity", c.less(f64(-Infinity), f64(Infinity)), c.bool)
   })
   assert.equal(
     emitC(program),
-    `#include <stdint.h>
+    `#include <stdbool.h>
+#include <stdint.h>
 
-int32_t int32_t_2 = UINT32_C(1) < -1;
+bool int32_t_2 = UINT32_C(1) < -1;
 int64_t INT64_C_2 = -INT64_C(5) + UINT64_C(9007199254740991);
 int32_t min = INT32_MIN;
 int32_t small = 65535 + -128;
@@ -246,7 +245,7 @@ double big = 1e+21;
 double tiny = -1.5e-7;
 double negativeZero = -0.0;
 double notANumber = 0.0 / 0.0 + 1.0;
-double infinity = -1.0 / 0.0 < 1.0 / 0.0;
+bool infinity = -1.0 / 0.0 < 1.0 / 0.0;
 `,
   )
   assert.throws(() => c.literal(c.int(8), 300), /int8_t cannot hold the literal 300 exactly/)
@@ -267,7 +266,7 @@ test("C rejects invalid program structure", () => {
     () =>
       c.program(function*() {
         yield* c.fn("outer", [], c.void, function*() {
-          yield* c.if(i32(1), function*() {
+          yield* c.if(c.true, function*() {
             yield* c.fn("inner", [], c.void, function*() {})
           })
         })
@@ -294,10 +293,10 @@ test("C rejects invalid program structure", () => {
   )
   assert.throws(() => c.address(i32(1) as never), /only an lvalue has an address/)
   const constants = c.program(function*() {
-    const x = yield* c.let("x", c.add(i32(1), c.less(i8(2), f64(3))), c.int(32))
+    const x = yield* c.let("x", c.add(i32(1), c.ternary(c.less(i8(2), f64(3)), i32(1), i32(0))), c.int(32))
     yield* c.let("p", c.add(i32(1), c.address(x)), c.ptr(c.int(32)))
   })
-  assert.equal(emitC(constants), "#include <stdint.h>\n\nint32_t x = 1 + (2 < 3.0);\nint32_t* p = 1 + &x;\n")
+  assert.equal(emitC(constants), "#include <stdbool.h>\n#include <stdint.h>\n\nint32_t x = 1 + (2 < 3.0 ? 1 : 0);\nint32_t* p = 1 + &x;\n")
 })
 
 test("C executes pointer arithmetic, assignment through pointers, loops, and typed calls", () => {
