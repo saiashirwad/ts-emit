@@ -19,7 +19,7 @@ try {
   writeFileSync(c, run(process.execPath, ["examples/c.ts"]))
   run("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", c, "-o", executable])
   run(executable, [])
-  console.log("C example compiled and ran")
+  console.log("C example compiled and ran with sorted array elements")
 
   const prolog = join(directory, "example.pl")
   writeFileSync(prolog, run(process.execPath, ["examples/prolog.ts"]))

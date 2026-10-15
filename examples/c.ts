@@ -62,13 +62,13 @@ export const program = c.program(function*() {
     })
     const capped = yield* c.let("capped", c.cast(c.i32, c.call(min, largest, c.literal(c.i64, 100n))), c.i32)
     yield* c.assign(lastGrade, c.call(grade, capped))
-    const first = yield* c.let("first", i32(7), c.i32)
-    const second = yield* c.let("second", i32(3), c.i32)
-    const outOfOrder = yield* c.let("outOfOrder", c.less(second, first), c.bool)
+    const type = c.array(c.i32, 2)
+    const values = yield* c.let("values", c.literal(type, [7, 3]), type)
+    const outOfOrder = yield* c.let("outOfOrder", c.less(c.index(values, i32(1)), c.index(values, i32(0))), c.bool)
     yield* c.if(outOfOrder, function*() {
-      yield* c.run(c.call(swap, c.address(first), c.address(second)))
+      yield* c.run(c.call(swap, c.address(c.index(values, i32(0))), c.address(c.index(values, i32(1)))))
     })
-    yield* c.return(i32(0))
+    yield* c.return(c.ternary(c.less(c.index(values, i32(0)), c.index(values, i32(1))), i32(0), i32(1)))
   })
 })
 

@@ -33,6 +33,13 @@ const cases = [
     invalid: "c.let(\"p\", c.address(c.index(c.literal(c.array(c.i32, 1), [1]), n)), c.ptr(c.f64))",
   },
   {
+    name: "index element pointer argument",
+    valid:
+      "c.program(function*() { const f = yield* c.fn(\"f\", [c.param(\"x\", c.ptr(c.i32))], c.void, function*() {}); c.call(f, c.address(c.index(c.literal(c.array(c.i32, 1), [1]), n))) })",
+    invalid:
+      "c.program(function*() { const f = yield* c.fn(\"f\", [c.param(\"x\", c.ptr(c.i32))], c.void, function*() {}); c.call(f, c.address(c.index(c.literal(c.array(c.f64, 1), [1]), n))) })",
+  },
+  {
     name: "array binding length",
     valid: "c.let(\"a\", c.literal(c.array(c.i32, 1), [1]), c.array(c.i32, 1))",
     invalid: "c.let(\"a\", c.literal(c.array(c.i32, 1), [1]), c.array(c.i32, 2))",

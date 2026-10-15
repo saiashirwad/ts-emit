@@ -609,7 +609,9 @@ test("C indexing retains element lvalues and postfix precedence", () => {
       yield* c.assign(c.index(array, u32(0)), i32(3))
       yield* c.assign(c.index(array, c.literal(c.i64, 1n)), i32(4))
       yield* c.assign(c.index(array, c.literal(c.u64, 1n)), i32(4))
-      const pointer = yield* c.let("pointer", c.address(element), c.ptr(c.i32))
+      const address = c.address(element)
+      assertType<Equal<lang.Denotes<typeof address>, Ptr<I32>>>()
+      const pointer = yield* c.let("pointer", address, c.ptr(c.i32))
       yield* c.assign(c.deref(pointer), c.add(element, i32(1)))
       yield* c.return(c.index(array, c.ternary(c.true, i32(0), i32(1))))
     })
@@ -620,6 +622,16 @@ test("C indexing retains element lvalues and postfix precedence", () => {
   assert.match(emitted, /values\[INT64_C\(1\)\] = 4;/)
   assert.match(emitted, /values\[UINT64_C\(1\)\] = 4;/)
   assert.match(emitted, /return values\[true \? 0 : 1\];/)
+})
+
+test("the C example swaps array elements through typed pointer arguments", () => {
+  const emitted = spawnSync(process.execPath, ["examples/c.ts"], { encoding: "utf8" })
+  assert.ifError(emitted.error)
+  assert.equal(emitted.status, 0, emitted.stderr)
+  assert.match(emitted.stdout, /int32_t values\[2\] = \{7, 3\};/)
+  assert.match(emitted.stdout, /bool outOfOrder = values\[1\] < values\[0\];/)
+  assert.match(emitted.stdout, /swap\(&values\[0\], &values\[1\]\);/)
+  assert.match(emitted.stdout, /return values\[0\] < values\[1\] \? 0 : 1;/)
 })
 
 test("C indexing checks types and literal bounds but leaves expressions unchecked", () => {
