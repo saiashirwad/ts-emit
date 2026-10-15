@@ -17,6 +17,9 @@ importers:
       dprint:
         specifier: ^0.55.2
         version: 0.55.2
+      fast-check:
+        specifier: 4.3.0
+        version: 4.3.0
       oxlint:
         specifier: 1.78.0
         version: 1.78.0
@@ -363,6 +366,10 @@ packages:
     resolution: {integrity: sha512-1d4D4SB9KiD2qFnBWbl3aoYjLvPVpZoth28yxTT00xJv2yXugdz0Xoyv7sGG0w0hzE6hQZMgd6B333GnySDpGQ==}
     hasBin: true
 
+  fast-check@4.3.0:
+    resolution: {integrity: sha512-JVw/DJSxVKl8uhCb7GrwanT9VWsCIdBkK3WpP37B/Au4pyaspriSjtrY2ApbSFwTg3ViPfniT13n75PhzE7VEQ==}
+    engines: {node: '>=12.17.0'}
+
   oxlint@1.78.0:
     resolution: {integrity: sha512-QgQePuxIqKOzo1KSjG2EnITEeWvWnKAm77eq8nrMtf6AGoA+zyGc4PFYtDNJSD25g/ibOwfQ851hZ4/SPkMVoA==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -375,6 +382,9 @@ packages:
         optional: true
       vite-plus:
         optional: true
+
+  pure-rand@7.0.1:
+    resolution: {integrity: sha512-oTUZM/NAZS8p7ANR3SHh30kXB+zK2r2BPcEn/awJIbOvq82WoMN4p62AWWp3Hhw50G0xMsw1mhIBLqHw64EcNQ==}
 
   typescript@7.0.2:
     resolution: {integrity: sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==}
@@ -572,6 +582,10 @@ snapshots:
       '@dprint/win32-arm64': 0.55.2
       '@dprint/win32-x64': 0.55.2
 
+  fast-check@4.3.0:
+    dependencies:
+      pure-rand: 7.0.1
+
   oxlint@1.78.0:
     optionalDependencies:
       '@oxlint/binding-android-arm-eabi': 1.78.0
@@ -593,6 +607,8 @@ snapshots:
       '@oxlint/binding-win32-arm64-msvc': 1.78.0
       '@oxlint/binding-win32-ia32-msvc': 1.78.0
       '@oxlint/binding-win32-x64-msvc': 1.78.0
+
+  pure-rand@7.0.1: {}
 
   typescript@7.0.2:
     optionalDependencies:

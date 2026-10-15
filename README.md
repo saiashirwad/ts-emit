@@ -27,4 +27,10 @@ pnpm install
 pnpm verify
 ```
 
-Verification checks types and runs emitted programs in all three runtimes.
+Verification checks types and runs emitted programs in all three runtimes. fast-check runtime properties use bounded batches and a fixed seed. Replay a failure with its reported seed and path:
+
+```sh
+FC_SEED=20261015 FC_PATH='0:1' node --test --test-name-pattern='property name' tests/lua.property.test.ts
+```
+
+Use the failing test's name, file, seed, and path.
