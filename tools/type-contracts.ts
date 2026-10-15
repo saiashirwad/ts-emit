@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 
 const directory = mkdtempSync(resolve(".type-contracts-"))
 const file = join(directory, "contract.ts")
-const prefix = `import { c, type C, type Char, type I32 } from "../languages/c.ts"
+const prefix = `import { c, type C, type Char, type I32, type Void } from "../languages/c.ts"
 import type { Expr, Ref } from "../src/index.ts"
 declare const n: Ref<C, I32>
 const p = c.address(n)
@@ -29,6 +29,23 @@ const cases = [
   { name: "u64 literal input", valid: "c.literal(c.u64, 18446744073709551615n)", invalid: "c.literal(c.u64, 1)" },
   { name: "i32 literal input", valid: "c.literal(c.i32, 1)", invalid: "c.literal(c.i32, 1n)" },
   { name: "f64 literal input", valid: "c.literal(c.f64, 1)", invalid: "c.literal(c.f64, 1n)" },
+  {
+    name: "numeric cast pairs",
+    valid: ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f64"].map((target) =>
+      ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f64"].map((source) =>
+        `c.cast(c.${target}, c.literal(c.${source}, ${source === "i64" || source === "u64" ? "1n" : "1"}));`
+      ).join("\n")
+    ).join("\n"),
+    invalid: "c.cast(c.i32, c.literal(c.char, \"a\"))",
+  },
+  { name: "cast char source", valid: "c.cast(c.i32, n)", invalid: "c.cast(c.i32, c.literal(c.char, \"a\"))" },
+  { name: "cast bool source", valid: "c.cast(c.i32, n)", invalid: "c.cast(c.i32, c.true)" },
+  { name: "cast pointer source", valid: "c.cast(c.i32, n)", invalid: "c.cast(c.i32, p)" },
+  { name: "cast char target", valid: "c.cast(c.i32, n)", invalid: "c.cast(c.char, n)" },
+  { name: "cast bool target", valid: "c.cast(c.i32, n)", invalid: "c.cast(c.bool, n)" },
+  { name: "cast pointer target", valid: "c.cast(c.i32, n)", invalid: "c.cast(c.ptr(c.i32), n)" },
+  { name: "cast void target", valid: "c.cast(c.i32, n)", invalid: "c.cast(c.void, n)" },
+  { name: "cast void source", valid: "c.cast(c.i32, n)", invalid: "declare const value: Expr<C, Void>; c.cast(c.i32, value)" },
   { name: "bool condition", valid: "c.if(c.true, function*() {})", invalid: "c.if(n, function*() {})" },
   { name: "ternary branches", valid: "c.ternary(c.true, n, n)", invalid: "c.ternary(c.true, n, p)" },
   { name: "declared binding type", valid: "c.let(\"n\", n, c.i32)", invalid: "c.let(\"n\", n)" },

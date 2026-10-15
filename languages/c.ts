@@ -143,6 +143,11 @@ export interface UnaryNode {
   readonly operand: Expr<C, unknown>
   readonly lvalue?: true
 }
+export interface CastNode {
+  readonly kind: "cast"
+  readonly operand: Expr<C, unknown>
+  readonly type: TypeNode<C, unknown>
+}
 export interface TernaryNode {
   readonly kind: "ternary"
   readonly condition: Expr<C, boolean>
@@ -158,6 +163,7 @@ const voidTypeClass = typeClass()
 const pointerTypeClass = typeClass<PointerTypeNode>({ children: (node) => [node.to] })
 const literalClass = exprClass<LiteralNode>()
 const unaryClass = exprClass<UnaryNode>({ children: (node) => [node.operand] })
+const castClass = exprClass<CastNode>({ children: (node) => [node.operand] })
 const ternaryClass = exprClass<TernaryNode>({ children: (node) => [node.condition, node.then, node.otherwise] })
 
 type IntFacts = { readonly kind: "int-type" }
@@ -168,6 +174,7 @@ const fieldsOf = <N>(node: AnyNode): N => node as unknown as N
 
 const isArithmeticConstant = (node: AnyNode): boolean =>
   node.kind === "literal"
+  || (node.kind === "cast" && isArithmeticConstant(fieldsOf<CastNode>(node).operand))
   || ((node.kind === "add" || node.kind === "less") && isArithmeticConstant(fieldsOf<BinaryNode>(node).left)
     && isArithmeticConstant(fieldsOf<BinaryNode>(node).right))
   || (node.kind === "ternary" && [fieldsOf<TernaryNode>(node).condition, fieldsOf<TernaryNode>(node).then, fieldsOf<TernaryNode>(node).otherwise]
@@ -257,6 +264,10 @@ export const c = {
     then: Expr<C, A, FA>,
     otherwise: Expr<C, B, FB> & Check<Equal<A, B>, "branches have different types", { then: A; otherwise: B }>,
   ): Expr<C, A, { readonly kind: "ternary" } | FC | FA | FB> => expr(ternaryClass, { kind: "ternary", condition, then, otherwise }, then.type),
+  cast: <D extends Arith, FT extends Facts, A extends Arith, FA extends Facts>(
+    type: TypeNode<C, D, FT>,
+    operand: Expr<C, A, FA>,
+  ): Expr<C, D, { readonly kind: "cast" } | FT | FA> => expr(castClass, { kind: "cast", operand }, type),
   address: <D, F extends Facts>(operand: Lvalue<C, D, F>): Expr<C, Ptr<D>, { readonly kind: "address" } | F> => {
     if (!isLvalue(operand)) throw new Error("only an lvalue has an address")
     return expr(unaryClass, { kind: "address", operand }, typeNode(pointerTypeClass, { kind: "pointer-type", to: operand.type }))
@@ -366,6 +377,7 @@ export const cTarget = defineTarget(
       return value < 0 || Object.is(value, -0) ? frag(UNARY, `-${magnitude}`) : frag(POSTFIX, magnitude)
     },
     ref: (node: RefNode, emit) => emit.name(node.binding),
+    cast: (node: CastNode, emit) => ({ prec: UNARY, text: `(${emit.node(node.type).text})${emit.at(node.operand, UNARY)}` }),
     address: (node: UnaryNode, emit) => ({ prec: UNARY, text: `&${emit.at(node.operand, UNARY)}` }),
     deref: (node: UnaryNode, emit) => ({ prec: UNARY, text: `*${emit.at(node.operand, UNARY)}` }),
     add: (node: BinaryNode, emit) => ({ prec: ADD, text: `${emit.at(node.left, ADD)} + ${emit.at(node.right, ADD + 1)}` }),

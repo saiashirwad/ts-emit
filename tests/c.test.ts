@@ -320,6 +320,68 @@ test("C 64-bit literals preserve exact bounds", () => {
   }
 })
 
+test("C numeric casts preserve target types, precedence, and C semantics", () => {
+  const narrowed = c.cast(c.i32, f64(3.9))
+  assertType<Equal<lang.Denotes<typeof narrowed>, I32>>()
+  const widened = c.cast(c.f64, c.literal(c.i64, 42n))
+  assertType<Equal<lang.Denotes<typeof widened>, F64>>()
+  const program = c.program(function*() {
+    yield* c.let("sum", c.cast(c.i32, c.add(f64(1.5), f64(2.5))), c.i32)
+    yield* c.let("truncated", narrowed, c.i32)
+    yield* c.let("wrapped", c.cast(c.u8, i32(257)), c.u8)
+    yield* c.let("wide", widened, c.f64)
+    yield* c.let("nested", c.cast(c.i64, c.cast(c.i32, f64(-3.9))), c.i64)
+    yield* c.let("branch", c.cast(c.i32, c.ternary(c.true, f64(1.5), f64(2.5))), c.i32)
+    yield* c.let("added", c.add(narrowed, i32(2)), c.i32)
+    yield* c.fn("truncate", [c.param("value", c.f64)], c.i32, function*(value) {
+      yield* c.return(c.cast(c.i32, value))
+    })
+  })
+  const emitted = emitC(program)
+  assert.equal(
+    emitted,
+    `#include <stdbool.h>
+#include <stdint.h>
+
+int32_t sum = (int32_t)(1.5 + 2.5);
+int32_t truncated = (int32_t)3.9;
+uint8_t wrapped = (uint8_t)257;
+double wide = (double)INT64_C(42);
+int64_t nested = (int64_t)(int32_t)-3.9;
+int32_t branch = (int32_t)(true ? 1.5 : 2.5);
+int32_t added = (int32_t)3.9 + 2;
+int32_t truncate(double value) {
+  return (int32_t)value;
+}
+`,
+  )
+  assert.throws(() =>
+    c.program(function*() {
+      const value = yield* c.let("value", i32(1), c.i32)
+      yield* c.let("nonconstant", c.cast(c.f64, value), c.f64)
+    }), /needs a constant initializer/)
+  const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-cast-"))
+  try {
+    const source = join(directory, "program.c")
+    const executable = join(directory, "program")
+    writeFileSync(
+      source,
+      `${emitted}\nint main(void) {
+  return sum == 4 && truncated == 3 && wrapped == 1 && wide == 42.0 && nested == -3
+    && branch == 1 && added == 5 && truncate(-3.9) == -3 ? 0 : 1;
+}\n`,
+    )
+    const compiled = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", executable], { encoding: "utf8" })
+    assert.ifError(compiled.error)
+    assert.equal(compiled.status, 0, compiled.stderr)
+    const executed = spawnSync(executable, [], { encoding: "utf8" })
+    assert.ifError(executed.error)
+    assert.equal(executed.status, 0, executed.stderr)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test("C rejects invalid program structure", () => {
   assert.throws(
     () =>
