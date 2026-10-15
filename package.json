@@ -1,0 +1,29 @@
+{
+  "name": "@texoport/ts-emit",
+  "type": "module",
+  "module": "src/lang/index.ts",
+  "exports": {
+    ".": "./src/lang/index.ts",
+    "./languages/c": "./languages/c.ts",
+    "./languages/prolog": "./languages/prolog.ts",
+    "./languages/lua": "./languages/lua.ts"
+  },
+  "scripts": {
+    "format": "dprint fmt",
+    "format:check": "dprint check",
+    "lint": "oxlint",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit --incremental false --composite false --declaration false",
+    "types:controls": "node tools/type-contracts.ts",
+    "verify:runtimes": "node tools/verify-runtimes.ts",
+    "verify": "pnpm typecheck && pnpm types:controls && pnpm test && pnpm verify:runtimes && pnpm lint && pnpm format:check"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
+    "@types/node": "latest",
+    "dprint": "^0.55.2",
+    "oxlint": "1.78.0",
+    "typescript": "7.0.2"
+  },
+  "packageManager": "pnpm@11.13.0"
+}

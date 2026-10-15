@@ -1,0 +1,23 @@
+name: Verify library contracts
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: sudo apt-get update && sudo apt-get install -y clang lua5.4 swi-prolog-nox
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
