@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 
 const directory = mkdtempSync(resolve(".type-contracts-"))
 const file = join(directory, "contract.ts")
-const prefix = `import { c, type C, type Char, type I32, type Void } from "../languages/c.ts"
+const prefix = `import { c, type C, type Char, type I32, type Ptr, type Void } from "../languages/c.ts"
 import type { Expr, Ref } from "../src/index.ts"
 declare const n: Ref<C, I32>
 const p = c.address(n)
@@ -84,6 +84,7 @@ const cases = [
   { name: "pointer assignment", valid: "c.let(\"p\", p, c.ptr(c.i32))", invalid: "c.let(\"p\", p, c.ptr(c.f64))" },
   { name: "pointer arithmetic", valid: "c.add(p, n)", invalid: "c.add(p, p)" },
   { name: "pointer dereference", valid: "c.deref(p)", invalid: "c.deref(n)" },
+  { name: "void pointer dereference", valid: "c.deref(p)", invalid: "declare const v: Expr<C, Ptr<Void>>; c.deref(v)" },
   { name: "address of an lvalue", valid: "c.address(c.deref(p))", invalid: "c.address(c.literal(c.i32, 1))" },
   { name: "assignment through a pointer", valid: "c.assign(c.deref(p), n)", invalid: "c.assign(p, n)" },
   { name: "bool assignment", valid: "c.let(\"b\", c.less(n, n), c.bool)", invalid: "c.let(\"b\", c.less(n, n), c.i32)" },

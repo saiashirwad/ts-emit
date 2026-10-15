@@ -430,6 +430,15 @@ test("C rejects invalid program structure", () => {
     /the top-level "let" of "y" needs a constant initializer in C/,
   )
   assert.throws(() => c.address(i32(1) as never), /only an lvalue has an address/)
+  assert.throws(
+    () =>
+      c.program(function*() {
+        yield* c.fn("invalid", [c.param("v", c.ptr(c.void))], c.void, function*(v) {
+          yield* c.run(c.deref(v as never))
+        })
+      }),
+    /a void pointer cannot be dereferenced/,
+  )
   const constants = c.program(function*() {
     const x = yield* c.let("x", c.add(i32(1), c.ternary(c.less(i32(2), i32(3)), i32(1), i32(0))), c.i32)
     yield* c.let("p", c.add(i32(1), c.address(x)), c.ptr(c.i32))

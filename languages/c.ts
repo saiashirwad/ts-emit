@@ -292,16 +292,18 @@ export const c = {
     if (!isLvalue(operand)) throw new Error("only an lvalue has an address")
     return expr(unaryClass, { kind: "address", operand }, typeNode(pointerTypeClass, { kind: "pointer-type", to: operand.type }))
   },
-  deref: <D, F extends Facts>(operand: Expr<C, Ptr<D>, F>): Lvalue<C, D, { readonly kind: "deref" } | F> =>
-    expr<C, D, { readonly kind: "deref" } | F>(
-      unaryClass,
-      { kind: "deref", operand, lvalue: true },
-      operand.type.kind === "pointer-type"
-        ? (operand.type as unknown as PointerTypeNode).to
-        : (() => {
-          throw new Error("dereference needs a pointer type")
-        })(),
-    ) as Lvalue<C, D, { readonly kind: "deref" } | F>,
+  deref: <D, F extends Facts>(
+    operand: Expr<C, Ptr<D>, F> & ([D] extends [Void] ? never : unknown),
+  ): Lvalue<C, D, { readonly kind: "deref" } | F> => {
+    if (operand.type.kind !== "pointer-type") throw new Error("dereference needs a pointer type")
+    const to = fieldsOf<PointerTypeNode>(operand.type).to
+    if (to.kind === "void-type") throw new Error("a void pointer cannot be dereferenced")
+    return expr<C, D, { readonly kind: "deref" } | F>(unaryClass, { kind: "deref", operand, lvalue: true }, to) as Lvalue<
+      C,
+      D,
+      { readonly kind: "deref" } | F
+    >
+  },
 
   program: <Y extends Stmt<C, any, any>>(body: () => Generator<Y, void, unknown>): Program<C, KindsOf<Y>> => {
     const program = builder<C>()(body)
