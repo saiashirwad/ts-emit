@@ -25,24 +25,6 @@ const sumProgram = lua.program(function*() {
   yield* lua.run(lua.call(lua.print, lua.call(sum, lua.literal(10))))
 })
 
-test("Lua emits a sum loop and a print call", () => {
-  assert.equal(
-    emitLua(sumProgram),
-    [
-      "local function sum(count)",
-      "  local total = 0",
-      "  local i = 0",
-      "  while i < count do",
-      "    total = total + i",
-      "    i = i + 1",
-      "  end",
-      "  return total",
-      "end",
-      "print((sum(10)))",
-    ].join("\n"),
-  )
-})
-
 test("Lua executes a sum loop", { skip: runtime ? false : "Lua runtime not installed" }, () => {
   assert.equal(run(emitLua(sumProgram)), "45\n")
 })

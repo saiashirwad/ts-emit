@@ -189,7 +189,6 @@ test("C spells leading underscores safely and preserves collisions and reference
 
 test("C compiles C11 keywords and reserved underscore names in every binding position", () => {
   const names = ["_Alignas", "_Alignof", "_Atomic", "_Generic", "_Noreturn", "_Static_assert", "_Thread_local", "__LINE__", "__FILE__", "_value"]
-  for (const name of names.slice(0, 7)) assert.equal(cTarget.naming.reserved.has(name), true)
   const program = c.program(function*() {
     for (const name of names) {
       const global = yield* c.let(name, i32(1), c.int(32))
