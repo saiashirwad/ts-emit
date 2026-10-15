@@ -4,6 +4,7 @@ const i32 = (value: number) => c.literal(c.int(32), value)
 
 export const program = c.program(function*() {
   const calls = yield* c.let("calls", i32(0), c.int(32))
+  const lastGrade = yield* c.let("lastGrade", c.literal(c.char, "?"), c.char)
 
   const increment = yield* c.fn("increment", [c.param("counter", c.ptr(c.int(32)))], c.void, function*(counter) {
     yield* c.assign(c.deref(counter), c.add(c.deref(counter), i32(1)))
@@ -38,6 +39,20 @@ export const program = c.program(function*() {
     })
   })
 
+  const min = yield* c.fn("min", [c.param("x", c.int(64)), c.param("y", c.int(64))], c.int(64), function*(x, y) {
+    yield* c.return(c.ternary(c.less(x, y), x, y))
+  })
+
+  const grade = yield* c.fn("grade", [c.param("score", c.int(32))], c.char, function*(score) {
+    yield* c.if(c.less(score, i32(50)), function*() {
+      yield* c.return(c.literal(c.char, "F"))
+    })
+    yield* c.if(c.less(score, i32(80)), function*() {
+      yield* c.return(c.literal(c.char, "B"))
+    })
+    yield* c.return(c.literal(c.char, "A"))
+  })
+
   yield* c.fn("main", [], c.int(32), function*() {
     const largest = yield* c.let("largest", i32(0), c.int(64))
     const i = yield* c.let("i", i32(0), c.int(32))
@@ -45,9 +60,14 @@ export const program = c.program(function*() {
       yield* c.assign(largest, c.call(max, largest, c.call(fib, i)))
       yield* c.assign(i, c.add(i, i32(1)))
     })
-    const low = yield* c.let("low", i32(1), c.int(32))
-    const high = yield* c.let("high", i32(2), c.int(32))
-    yield* c.run(c.call(swap, c.address(low), c.address(high)))
+    const capped = yield* c.let("capped", c.call(min, largest, i32(100)), c.int(32))
+    yield* c.assign(lastGrade, c.call(grade, capped))
+    const first = yield* c.let("first", i32(7), c.int(32))
+    const second = yield* c.let("second", i32(3), c.int(32))
+    const outOfOrder = yield* c.let("outOfOrder", c.less(second, first), c.bool)
+    yield* c.if(outOfOrder, function*() {
+      yield* c.run(c.call(swap, c.address(first), c.address(second)))
+    })
     yield* c.return(i32(0))
   })
 })
