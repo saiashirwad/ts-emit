@@ -870,3 +870,75 @@ test("C defer rejects a return or a defer inside its body", () => {
       })
     }), /"defer" cannot appear inside "defer"/)
 })
+
+test("C arena memory lives for its block, is released at every exit, and new returns null once it is full", () => {
+  const program = c.program(function*() {
+    const sumTo = yield* c.fn("sumTo", [c.param("n", c.i32)], c.i32, function*(n) {
+      yield* c.arena("scratch", 64, function*(scratch) {
+        yield* c.maybe(function*() {
+          const total = yield* c.bind("total", c.new(scratch, i32(0)))
+          assertType<Equal<lang.Denotes<typeof total>, Ptr<I32>>>()
+          const i = yield* c.let("i", i32(0), c.i32)
+          yield* c.while(c.less(i, n), function*() {
+            yield* c.assign(c.deref(total), c.add(c.deref(total), i))
+            yield* c.assign(i, c.add(i, i32(1)))
+          })
+          yield* c.return(c.deref(total))
+        })
+      })
+      yield* c.return(i32(-1))
+    })
+    const exhausted = yield* c.fn("exhausted", [], c.i32, function*() {
+      yield* c.arena("tiny", 4, function*(tiny) {
+        yield* c.maybe(function*() {
+          const first = yield* c.bind("first", c.new(tiny, i32(1)))
+          const second = yield* c.bind("second", c.new(tiny, i32(1)))
+          yield* c.return(c.add(c.deref(first), c.deref(second)))
+        })
+      })
+      yield* c.return(i32(2))
+    })
+    yield* c.fn("main", [], c.i32, function*() {
+      yield* c.return(c.add(c.call(sumTo, i32(5)), c.call(exhausted)))
+    })
+  })
+  const emitted = emitC(program)
+  assert.match(emitted, /#include <stdlib\.h>\n#include <string\.h>\n\ntypedef struct \{ uint8_t\* data; size_t size; size_t used; \} Arena;/)
+  assert.match(
+    emitted,
+    /\{\n    Arena scratch_arena = arena_make\(64\);\n    Arena\* scratch = &scratch_arena;\n    \{\n      int32_t\* total = arena_new\(scratch, sizeof\(int32_t\), _Alignof\(int32_t\), &\(int32_t\)\{0\}\);/,
+  )
+  assert.match(emitted, /int32_t result = \*total;\n        arena_free\(scratch\);\n        return result;/)
+  assert.match(emitted, /\n    \}\n    arena_free\(scratch\);\n  \}\n  return -1;/)
+  assert.throws(() => c.arena("empty", 0, function*() {}), /arena size must be a positive safe integer/)
+  const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-"))
+  try {
+    const source = join(directory, "program.c")
+    const executable = join(directory, "program")
+    writeFileSync(source, emitted)
+    const compiled = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", executable], { encoding: "utf8" })
+    assert.ifError(compiled.error)
+    assert.equal(compiled.status, 0, compiled.stderr)
+    const executed = spawnSync(executable, [], { encoding: "utf8" })
+    assert.ifError(executed.error)
+    assert.equal(executed.status, 12, executed.stderr)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("C new rejects values that cannot be allocated", () => {
+  c.program(function*() {
+    yield* c.fn("main", [], c.void, function*() {
+      yield* c.arena("scratch", 8, function*(scratch) {
+        const values = yield* c.let("values", c.literal(c.array(c.i32, 1), [1]), c.array(c.i32, 1))
+        // @ts-expect-error an array cannot be allocated
+        assert.throws(() => c.new(scratch, values), /new needs a scalar or pointer value/)
+        // @ts-expect-error an allocator cannot be allocated
+        assert.throws(() => c.new(scratch, scratch), /new needs a scalar or pointer value/)
+        // @ts-expect-error new needs an allocator
+        assert.throws(() => c.new(i32(1), i32(1)), /new needs an allocator/)
+      })
+    })
+  })
+})

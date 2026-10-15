@@ -31,6 +31,7 @@ import {
   ref,
   type RuntimeType,
   scope,
+  type Signature,
   type Stmt,
   stmt,
   stmtClass,
@@ -70,6 +71,7 @@ export type Tuple<T, N extends number, A extends readonly T[] = readonly []> =
   : never
 
 export type Void = { readonly [CType]: "void" }
+export type Allocator = { readonly [CType]: "allocator" }
 
 export interface CAssign extends TypeLambda {
   readonly type: this["Args"] extends readonly [infer A, infer B]
@@ -151,6 +153,22 @@ export interface MaybeNode {
   readonly kind: "maybe"
   readonly body: Block
 }
+export interface ArenaNode {
+  readonly kind: "arena"
+  readonly binding: Binding
+  readonly backing: Binding
+  readonly size: number
+  readonly body: Block
+}
+export interface ArenaFreeNode {
+  readonly kind: "arena-free"
+  readonly allocator: Binding
+}
+export interface NewNode {
+  readonly kind: "new"
+  readonly allocator: Expr<C, Allocator>
+  readonly value: Expr<C, unknown>
+}
 export interface DeferNode {
   readonly kind: "defer"
   readonly body: Block
@@ -168,6 +186,7 @@ const doubleTypeClass = typeClass()
 const boolTypeClass = typeClass()
 const charTypeClass = typeClass()
 const voidTypeClass = typeClass()
+const allocatorTypeClass = typeClass()
 const pointerTypeClass = typeClass<PointerTypeNode>({ children: (node) => [node.to] })
 const nullableTypeClass = typeClass<NullableTypeNode>({ children: (node) => [node.to] })
 const arrayTypeClass = typeClass<ArrayTypeNode>({ children: (node) => [node.element] })
@@ -181,6 +200,9 @@ const bindClass = stmtClass<BindNode>({
 })
 const maybeClass = stmtClass<MaybeNode>({ children: (node) => [node.body] })
 const deferClass = stmtClass<DeferNode>({ children: (node) => [node.body], declares: (node) => [node.result] })
+const arenaClass = stmtClass<ArenaNode>({ children: (node) => [node.body] })
+const arenaFreeClass = stmtClass<ArenaFreeNode>({ references: (node) => [node.allocator] })
+const newClass = exprClass<NewNode>({ children: (node) => [node.allocator, node.value] })
 const ternaryClass = exprClass<TernaryNode>({ children: (node) => [node.condition, node.then, node.otherwise] })
 
 type IntFacts = { readonly kind: "int-type" }
@@ -232,6 +254,7 @@ export const c = {
   char: typeNode<C, Char, { readonly kind: "char-type" }>(charTypeClass, { kind: "char-type" }),
   bool: typeNode<C, boolean, { readonly kind: "bool-type" }>(boolTypeClass, { kind: "bool-type" }),
   void: typeNode<C, Void, { readonly kind: "void-type" }>(voidTypeClass, { kind: "void-type" }),
+  allocator: typeNode<C, Allocator, { readonly kind: "allocator-type" }>(allocatorTypeClass, { kind: "allocator-type" }),
   array: <T extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char, F extends Facts, const N extends number>(
     element: TypeNode<C, T, F>,
     length: N & (number extends N ? never : unknown),
@@ -373,6 +396,30 @@ export const c = {
     stmt(maybeClass, { kind: "maybe", body: nested(drain(body).block.statements, []) }),
   defer: <Y extends Stmt<C, any, any>>(body: Body<C, Y>): Stmt<C, { readonly kind: "defer" } | FactsOf<Y>> =>
     stmt(deferClass, { kind: "defer", body: drain(body).block, result: binding("result") }),
+  arena: <Y extends Stmt<C, any, any>>(
+    nameHint: string,
+    size: number,
+    body: (allocator: Ref<C, Allocator>) => Generator<Y, void, unknown>,
+  ): Stmt<C, { readonly kind: "arena" | "arena-free" | "defer" | "ref" } | FactsOf<Y>> => {
+    if (!Number.isSafeInteger(size) || size <= 0) throw new Error("arena size must be a positive safe integer")
+    const declared = binding(nameHint)
+    const backing = binding(`${nameHint}_arena`)
+    const free = scope([], [stmt(arenaFreeClass, { kind: "arena-free", allocator: declared })])
+    const block = drain(() => body(ref(declared, c.allocator)), [declared, backing]).block
+    const release = stmt(deferClass, { kind: "defer", body: free, result: binding("result") })
+    return stmt(arenaClass, { kind: "arena", binding: declared, backing, size, body: scope(block.binds, [release, ...block.statements]) })
+  },
+  new: <D, FA extends Facts, FV extends Facts>(
+    allocator: Expr<C, Allocator, FA>,
+    value: Expr<C, D, FV> & ([D] extends [readonly unknown[] | Void | Allocator | Signature<any, any>] ? never : unknown),
+  ): Expr<C, Ptr<D> | null, { readonly kind: "new" } | FA | FV> => {
+    if (allocator.type.kind !== "allocator-type") throw new Error("new needs an allocator")
+    if (value.type.role !== "type" || ["array-type", "void-type", "allocator-type"].includes(value.type.kind)) {
+      throw new Error("new needs a scalar or pointer value")
+    }
+    const type = typeNode(nullableTypeClass, { kind: "nullable-type", to: typeNode(pointerTypeClass, { kind: "pointer-type", to: value.type }) })
+    return expr(newClass, { kind: "new", allocator, value }, type)
+  },
 
   program: <Y extends Stmt<C, any, any>>(body: () => Generator<Y, void, unknown>): Program<C, KindsOf<Y>> => {
     const program = builder<C>()(body)
@@ -390,6 +437,7 @@ export const c = {
         walk(fieldsOf<DeferNode>(parent).body, (node) => {
           if (node.kind === "return") throw new Error("\"return\" cannot appear inside \"defer\"")
           if (node.kind === "defer") throw new Error("\"defer\" cannot appear inside \"defer\"")
+          if (node.kind === "arena") throw new Error("\"arena\" cannot appear inside \"defer\"")
         })
       }
       if (parent.kind === "let") {
@@ -442,6 +490,8 @@ const STDINT = [
   ),
 ]
 
+const RUNTIME_NAMES = ["Arena", "arena_make", "arena_new", "arena_free", "malloc", "free", "memcpy"]
+
 const UNARY = 14
 const POSTFIX = 15
 const MULTIPLY = 13
@@ -476,7 +526,7 @@ const declaration = (type: TypeNode<C, unknown>, name: string, emit: Parameters<
 export const cTarget = defineTarget(
   {
     valid: (name) => /^[A-Za-z_]/.test(name) && !/[^A-Za-z0-9_]/.test(name),
-    reserved: new Set([...KEYWORDS, ...STDINT]),
+    reserved: new Set([...KEYWORDS, ...STDINT, ...RUNTIME_NAMES]),
     spell: (name) => name.startsWith("_") ? `binding${name}` : name,
   },
   {
@@ -485,6 +535,7 @@ export const cTarget = defineTarget(
     "bool-type": () => "bool",
     "char-type": () => "char",
     "void-type": () => "void",
+    "allocator-type": () => "Arena*",
     "array-type": () => {
       throw new Error("array types are only spelled in declarations")
     },
@@ -557,6 +608,19 @@ export const cTarget = defineTarget(
     maybe: (node: MaybeNode, emit) => braces(body(node.body, emit)),
     while: (node: WhileNode, emit) => `while (${emit.node(node.condition).text}) ${braces(body(node.body, emit))}`,
     defer: () => "",
+    arena: (node: ArenaNode, emit) => {
+      const name = emit.name(node.binding)
+      const backing = emit.name(node.backing)
+      return braces([`Arena ${backing} = arena_make(${node.size});`, `Arena* ${name} = &${backing};`, ...body(node.body, emit)])
+    },
+    "arena-free": (node: ArenaFreeNode, emit) => `arena_free(${emit.name(node.allocator)});`,
+    new: (node: NewNode, emit) => {
+      const type = emit.node(node.value.type as TypeNode<C, unknown>).text
+      return {
+        prec: POSTFIX,
+        text: `arena_new(${emit.node(node.allocator).text}, sizeof(${type}), _Alignof(${type}), &(${type}){${emit.node(node.value).text}})`,
+      }
+    },
     return: (node: ReturnNode, emit) => {
       const value = emit.node(node.value).text
       const live = [...emit.scopes].reverse().flatMap(deferredIn)
@@ -575,6 +639,35 @@ export const cTarget = defineTarget(
   },
 )
 
+const ARENA = "typedef struct { uint8_t* data; size_t size; size_t used; } Arena;"
+
+const ARENA_MAKE = `static Arena arena_make(size_t size) {
+  uint8_t* data = malloc(size);
+  return (Arena){data, data == NULL ? 0 : size, 0};
+}
+
+static void arena_free(Arena* arena) {
+  free(arena->data);
+}`
+
+const ARENA_NEW = `static void* arena_new(Arena* arena, size_t size, size_t align, const void* init) {
+  size_t start = (arena->used + align - 1) & ~(align - 1);
+  if (start > arena->size || size > arena->size - start) return NULL;
+  arena->used = start + size;
+  return memcpy(arena->data + start, init, size);
+}`
+
 // TODO: come up with an elegant, unified way to do imports instead of always including every header.
-export const emitC = <Kinds extends keyof typeof cTarget.handlers>(program: Program<C, Kinds>): string =>
-  `#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n${emit(program as Program<C, keyof typeof cTarget.handlers>, cTarget)}\n`
+export const emitC = <Kinds extends keyof typeof cTarget.handlers>(program: Program<C, Kinds>): string => {
+  const kinds = new Set<string>()
+  walk(program.root, (node) => kinds.add(node.kind))
+  const headers = ["stdbool.h", "stddef.h", "stdint.h", ...(kinds.has("arena") ? ["stdlib.h"] : []), ...(kinds.has("new") ? ["string.h"] : [])]
+  const runtime = [
+    ...(["arena", "new", "allocator-type"].some((kind) => kinds.has(kind)) ? [ARENA] : []),
+    ...(kinds.has("arena") ? [ARENA_MAKE] : []),
+    ...(kinds.has("new") ? [ARENA_NEW] : []),
+  ]
+  return `${headers.map((header) => `#include <${header}>\n`).join("")}\n${runtime.map((part) => `${part}\n\n`).join("")}${
+    emit(program as Program<C, keyof typeof cTarget.handlers>, cTarget)
+  }\n`
+}

@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 
 const directory = mkdtempSync(resolve(".type-contracts-"))
 const file = join(directory, "contract.ts")
-const prefix = `import { c, type C, type Char, type I32, type Ptr, type Void } from "../languages/c.ts"
+const prefix = `import { type Allocator, c, type C, type Char, type I32, type Ptr, type Void } from "../languages/c.ts"
 import type { Expr, Ref } from "../src/index.ts"
 declare const n: Ref<C, I32>
 const p = c.address(n)
@@ -96,6 +96,16 @@ const cases = [
     name: "bind a nullable pointer",
     valid: "declare const m: Expr<C, Ptr<I32> | null>; c.bind(\"q\", m)",
     invalid: "declare const m: Expr<C, Ptr<I32>>; c.bind(\"q\", m)",
+  },
+  {
+    name: "new needs an allocator",
+    valid: "declare const a: Expr<C, Allocator>; c.new(a, n)",
+    invalid: "c.new(n, n)",
+  },
+  {
+    name: "new needs a scalar or pointer value",
+    valid: "declare const a: Expr<C, Allocator>; c.new(a, p)",
+    invalid: "declare const a: Expr<C, Allocator>; c.new(a, a)",
   },
   { name: "maybe needs a generator body", valid: "c.maybe(function*() {})", invalid: "c.maybe(function() {})" },
   { name: "defer needs a generator body", valid: "c.defer(function*() {})", invalid: "c.defer(function() {})" },
