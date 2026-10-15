@@ -19,8 +19,8 @@ export const program = c.program(function*() {
   // TODO: allow recursion. fib loops instead because its binding only exists once c.fn returns.
   const fib = yield* c.fn("fib", [c.param("n", c.i32)], c.i64, function*(n) {
     yield* c.run(c.call(increment, c.address(calls)))
-    const a = yield* c.let("a", i32(0), c.i64)
-    const b = yield* c.let("b", i32(1), c.i64)
+    const a = yield* c.let("a", c.literal(c.i64, 0n), c.i64)
+    const b = yield* c.let("b", c.literal(c.i64, 1n), c.i64)
     const i = yield* c.let("i", i32(0), c.i32)
     yield* c.while(c.less(i, n), function*() {
       const sum = yield* c.let("sum", c.add(a, b), c.i64)
@@ -54,13 +54,13 @@ export const program = c.program(function*() {
   })
 
   yield* c.fn("main", [], c.i32, function*() {
-    const largest = yield* c.let("largest", i32(0), c.i64)
+    const largest = yield* c.let("largest", c.literal(c.i64, 0n), c.i64)
     const i = yield* c.let("i", i32(0), c.i32)
     yield* c.while(c.less(i, i32(12)), function*() {
       yield* c.assign(largest, c.call(max, largest, c.call(fib, i)))
       yield* c.assign(i, c.add(i, i32(1)))
     })
-    const capped = yield* c.let("capped", c.call(min, largest, i32(100)), c.i32)
+    const capped = yield* c.let("capped", c.cast(c.i32, c.call(min, largest, c.literal(c.i64, 100n))), c.i32)
     yield* c.assign(lastGrade, c.call(grade, capped))
     const first = yield* c.let("first", i32(7), c.i32)
     const second = yield* c.let("second", i32(3), c.i32)

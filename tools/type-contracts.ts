@@ -11,7 +11,26 @@ declare const n: Ref<C, I32>
 const p = c.address(n)
 `
 const cases = [
-  { name: "arithmetic assignment", valid: "c.let(\"n\", n, c.f64)", invalid: "c.let(\"n\", p, c.f64)" },
+  { name: "arithmetic assignment", valid: "c.let(\"n\", n, c.i32)", invalid: "c.let(\"n\", n, c.f64)" },
+  { name: "mixed integer addition", valid: "c.add(n, n)", invalid: "c.add(n, c.literal(c.i64, 1n))" },
+  { name: "mixed integer comparison", valid: "c.less(n, n)", invalid: "c.less(n, c.literal(c.i64, 1n))" },
+  { name: "mixed signedness addition", valid: "c.add(n, n)", invalid: "c.add(n, c.literal(c.u32, 1))" },
+  { name: "mixed float comparison", valid: "c.less(n, n)", invalid: "c.less(n, c.literal(c.f64, 1))" },
+  { name: "narrowing initializer", valid: "c.let(\"n\", c.cast(c.i8, n), c.i8)", invalid: "c.let(\"n\", n, c.i8)" },
+  { name: "numeric assignment", valid: "c.assign(n, n)", invalid: "c.assign(n, c.literal(c.i64, 1n))" },
+  { name: "narrowing float assignment", valid: "c.assign(n, c.cast(c.i32, c.literal(c.f64, 1)))", invalid: "c.assign(n, c.literal(c.f64, 1))" },
+  {
+    name: "narrowing numeric return",
+    valid: "c.fn(\"f\", [], c.i8, function*() { yield* c.return(c.cast(c.i8, n)) })[Symbol.iterator]()",
+    invalid: "c.fn(\"f\", [], c.i8, function*() { yield* c.return(n) })[Symbol.iterator]()",
+  },
+  {
+    name: "narrowing numeric argument",
+    valid:
+      "c.program(function*() { const f = yield* c.fn(\"f\", [c.param(\"x\", c.i8)], c.i8, function*(x) { yield* c.return(x) }); c.call(f, c.cast(c.i8, n)) })",
+    invalid:
+      "c.program(function*() { const f = yield* c.fn(\"f\", [c.param(\"x\", c.i8)], c.i8, function*(x) { yield* c.return(x) }); c.call(f, n) })",
+  },
   { name: "pointer assignment", valid: "c.let(\"p\", p, c.ptr(c.i32))", invalid: "c.let(\"p\", p, c.ptr(c.f64))" },
   { name: "pointer arithmetic", valid: "c.add(p, n)", invalid: "c.add(p, p)" },
   { name: "pointer dereference", valid: "c.deref(p)", invalid: "c.deref(n)" },

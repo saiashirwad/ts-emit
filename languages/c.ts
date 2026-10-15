@@ -51,55 +51,8 @@ export interface Void {
   readonly c: "void"
 }
 
-type Int<B extends Bits = Bits, Signed extends boolean = boolean> =
-  | (Signed extends true ? { 8: I8; 16: I16; 32: I32; 64: I64 }[B] : never)
-  | (Signed extends false ? { 8: U8; 16: U16; 32: U32; 64: U64 }[B] : never)
-
-type IntParts<T> =
-    T extends I8 ? [8, true]
-  : T extends I16 ? [16, true]
-  : T extends I32 ? [32, true]
-  : T extends I64 ? [64, true]
-  : T extends U8 ? [8, false]
-  : T extends U16 ? [16, false]
-  : T extends U32 ? [32, false]
-  : T extends U64 ? [64, false]
-  : never
-
-export type Arith = Int | F64
-
-type Wider<A extends Bits, B extends Bits> =
-    A extends 64 ? 64
-  : B extends 64 ? 64
-  : A extends 32 ? 32
-  : B extends 32 ? 32
-  : A extends 16 ? 16
-  : B extends 16 ? 16
-  : 8
-
-type Promoted<T> = T extends Int<8 | 16, boolean> ? Int<32, true> : T
-
-type IntConverted<X extends Bits, SA extends boolean, Y extends Bits, SB extends boolean> =
-    [X] extends [Y] ? Int<X, [SA, SB] extends [true, true] ? true : false>
-  : [Wider<X, Y>] extends [X] ? Int<X, SA>
-  : Int<Y, SB>
-
-export type Converted<A, B> =
-    [A, B] extends [F64, Arith] | [Arith, F64] ? F64
-  : [A, B] extends [Int, Int] ?
-      [IntParts<Promoted<A>>, IntParts<Promoted<B>>] extends [
-        [infer X extends Bits, infer SA extends boolean],
-        [infer Y extends Bits, infer SB extends boolean],
-      ] ? IntConverted<X, SA, Y, SB>
-    : never
-  : never
-
 export interface CAssign extends TypeLambda {
-  readonly type: this["Args"] extends readonly [infer A, infer B]
-    ? [A, B] extends [boolean, boolean] ? true
-    : [A, B] extends [Char, Char] ? true : [A, B] extends [Arith, Arith] ? true : [A, B] extends [Ptr<infer X>, Ptr<infer Y>] ? Equal<X, Y>
-    : false
-    : false
+  readonly type: this["Args"] extends readonly [infer A, infer B] ? Equal<A, B> : false
 }
 
 export interface CTruthy extends TypeLambda {
@@ -108,12 +61,17 @@ export interface CTruthy extends TypeLambda {
 
 export interface CSum extends TypeLambda {
   readonly type: this["Args"] extends readonly [infer A, infer B]
-    ? [A, B] extends [Ptr<unknown>, Int] ? A : [A, B] extends [Int, Ptr<unknown>] ? B : Converted<A, B>
+    ? [A, B] extends [Ptr<unknown>, I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64] ? A
+    : [A, B] extends [I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64, Ptr<unknown>] ? B
+    : [A] extends [I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64] ? Equal<A, B> extends true ? A : never
+    : never
     : never
 }
 
 export interface CCompare extends TypeLambda {
-  readonly type: this["Args"] extends readonly [infer A, infer B] ? [Converted<A, B>] extends [never] ? never : boolean : never
+  readonly type: this["Args"] extends readonly [infer A, infer B]
+    ? [A] extends [I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64] ? Equal<A, B> extends true ? boolean : never : never
+    : never
 }
 
 export interface C {
@@ -187,26 +145,10 @@ const isAddressConstant = (node: AnyNode): boolean => {
   return (isAddressConstant(left) && isArithmeticConstant(right)) || (isArithmeticConstant(left) && isAddressConstant(right))
 }
 
-const intType = (bits: Bits, signed: boolean): RuntimeType => typeNode(intTypeClass, { kind: "int-type", bits, signed })
-
-const converted = (left: RuntimeType, right: RuntimeType): RuntimeType => {
-  if (left.kind === "pointer-type") return left
-  if (right.kind === "pointer-type") return right
-  if (left.kind === "double-type" || right.kind === "double-type") return c.f64
-  if (left.kind !== "int-type" || right.kind !== "int-type") throw new Error("arithmetic needs concrete C types")
-  const promote = (type: RuntimeType): IntTypeNode => {
-    const node = type as unknown as IntTypeNode
-    return node.bits < 32 ? { kind: "int-type", bits: 32, signed: true } : node
-  }
-  const a = promote(left)
-  const b = promote(right)
-  return a.bits === b.bits ? intType(a.bits, a.signed && b.signed) : a.bits > b.bits ? intType(a.bits, a.signed) : intType(b.bits, b.signed)
-}
-
 export const c = {
   ...structured<C>(),
   ...functionConstruct<C>(),
-  ...addConstruct<C>(converted),
+  ...addConstruct<C>((left, right) => left.kind === "pointer-type" ? left : right.kind === "pointer-type" ? right : left),
   ...lessConstruct<C>((): RuntimeType => c.bool),
 
   i8: typeNode<C, I8, IntFacts>(intTypeClass, { kind: "int-type", bits: 8, signed: true }),
@@ -224,7 +166,7 @@ export const c = {
   ptr: <T, F extends Facts>(to: TypeNode<C, T, F>): TypeNode<C, Ptr<T>, { readonly kind: "pointer-type" } | F> =>
     typeNode(pointerTypeClass, { kind: "pointer-type", to }),
 
-  literal: <D extends Arith | Char, F extends Facts>(
+  literal: <D extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char, F extends Facts>(
     type: TypeNode<C, D, F>,
     value: D extends Char ? string : D extends I64 | U64 ? bigint : number,
   ): Expr<C, D, { readonly kind: "literal" } | F> => {
@@ -264,7 +206,12 @@ export const c = {
     then: Expr<C, A, FA>,
     otherwise: Expr<C, B, FB> & Check<Equal<A, B>, "branches have different types", { then: A; otherwise: B }>,
   ): Expr<C, A, { readonly kind: "ternary" } | FC | FA | FB> => expr(ternaryClass, { kind: "ternary", condition, then, otherwise }, then.type),
-  cast: <D extends Arith, FT extends Facts, A extends Arith, FA extends Facts>(
+  cast: <
+    D extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64,
+    FT extends Facts,
+    A extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64,
+    FA extends Facts,
+  >(
     type: TypeNode<C, D, FT>,
     operand: Expr<C, A, FA>,
   ): Expr<C, D, { readonly kind: "cast" } | FT | FA> => expr(castClass, { kind: "cast", operand }, type),
@@ -380,7 +327,16 @@ export const cTarget = defineTarget(
     cast: (node: CastNode, emit) => ({ prec: UNARY, text: `(${emit.node(node.type).text})${emit.at(node.operand, UNARY)}` }),
     address: (node: UnaryNode, emit) => ({ prec: UNARY, text: `&${emit.at(node.operand, UNARY)}` }),
     deref: (node: UnaryNode, emit) => ({ prec: UNARY, text: `*${emit.at(node.operand, UNARY)}` }),
-    add: (node: BinaryNode, emit) => ({ prec: ADD, text: `${emit.at(node.left, ADD)} + ${emit.at(node.right, ADD + 1)}` }),
+    add: (node: BinaryNode, emit) => {
+      const left = fieldsOf<Expr<C, unknown>>(node.left).type
+      const right = fieldsOf<Expr<C, unknown>>(node.right).type
+      const text = `${emit.at(node.left, ADD)} + ${emit.at(node.right, ADD + 1)}`
+      if (left.kind === "int-type" && right.kind === "int-type") {
+        const type = fieldsOf<IntTypeNode>(left)
+        if (type.bits < 32) return frag(UNARY, `(${intName(type)})(${text})`)
+      }
+      return frag(ADD, text)
+    },
     less: (node: BinaryNode, emit) => ({ prec: RELATIONAL, text: `${emit.at(node.left, RELATIONAL)} < ${emit.at(node.right, RELATIONAL + 1)}` }),
     ternary: (node: TernaryNode, emit) => ({
       prec: CONDITIONAL,

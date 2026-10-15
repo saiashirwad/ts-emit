@@ -5,21 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 
-import {
-  type C,
-  c,
-  type Converted,
-  cTarget,
-  emitC,
-  type F64,
-  type I32,
-  type I64,
-  type Ptr,
-  type U16,
-  type U32,
-  type U64,
-  type U8,
-} from "../languages/c.ts"
+import { type C, c, cTarget, emitC, type F64, type I32, type I8, type Ptr } from "../languages/c.ts"
 import * as lang from "../src/index.ts"
 import { assertType, type Equal } from "./typing.ts"
 
@@ -28,32 +14,17 @@ const i32 = (value: number) => c.literal(c.i32, value)
 const u32 = (value: number) => c.literal(c.u32, value)
 const f64 = (value: number) => c.literal(c.f64, value)
 
-export const conversionContracts = () => {
+export const arithmeticContracts = () => {
   const sum = c.add(i8(1), i8(2))
-  assertType<Equal<lang.Denotes<typeof sum>, I32>>()
-  const mixed = c.add(u32(1), i32(2))
-  assertType<Equal<lang.Denotes<typeof mixed>, U32>>()
-  const wide = c.add(c.literal(c.i64, 1n), i8(2))
-  assertType<Equal<lang.Denotes<typeof wide>, I64>>()
-  const real = c.add(i32(1), f64(2))
-  assertType<Equal<lang.Denotes<typeof real>, F64>>()
-  const compared = c.less(i8(1), f64(2))
+  assertType<Equal<lang.Denotes<typeof sum>, I8>>()
+  const compared = c.less(i32(1), i32(2))
   assertType<Equal<lang.Denotes<typeof compared>, boolean>>()
-  assertType<Equal<Converted<U8, U8>, I32>>()
-  assertType<Equal<Converted<U16, I32>, I32>>()
-  assertType<Equal<Converted<U16, U32>, U32>>()
-  assertType<Equal<Converted<U32, I64>, I64>>()
-  assertType<Equal<Converted<U64, I32>, U64>>()
-  assertType<Equal<Converted<I64, U64>, U64>>()
 
   c.program(function*() {
     yield* c.fn("main", [], c.void, function*() {
-      const n = yield* c.let("n", i8(1), c.i32)
-      yield* c.let("wide", n, c.i64)
+      const n = yield* c.let("n", i32(1), c.i32)
       // @ts-expect-error a C binding needs a declared type
       yield* c.let("untyped", n)
-      yield* c.let("real", n, c.f64)
-      yield* c.let("narrow", f64(2), c.i8)
       const p = yield* c.let("p", c.address(n), c.ptr(c.i32))
       const q = c.add(p, i32(1))
       assertType<Equal<lang.Denotes<typeof q>, Ptr<I32>>>()
@@ -97,16 +68,16 @@ export const conversionContracts = () => {
 
 export const functionContracts = () => {
   c.program(function*() {
-    const square = yield* c.fn("square", [c.param("x", c.i32)], c.i64, function*(x) {
+    const square = yield* c.fn("square", [c.param("x", c.i32)], c.i32, function*(x) {
       yield* c.if(c.less(x, i32(0)), function*() {
         yield* c.return(i32(0))
       })
       yield* c.return(c.add(x, x))
     })
     yield* c.fn("main", [], c.void, function*() {
-      yield* c.let("nine", c.call(square, i32(3)), c.i64)
+      yield* c.let("nine", c.call(square, i32(3)), c.i32)
     })
-    c.call(square, f64(3))
+    c.call(square, c.cast(c.i32, f64(3)))
     const one = yield* c.let("one", i32(1), c.i32)
     // @ts-expect-error a pointer argument does not convert to an int parameter
     c.call(square, c.address(one))
@@ -171,7 +142,7 @@ int32_t count(int32_t limit) {
       const x = yield* c.let("int", f64(2), c.f64)
       const p = yield* c.let("p", c.address(x), c.ptr(c.f64))
       yield* c.let("byte", c.literal(c.u8, 255), c.u8)
-      yield* c.return(c.add(c.deref(p), i32(1)))
+      yield* c.return(c.cast(c.i32, c.add(c.deref(p), f64(1))))
     })
   })
   assert.equal(
@@ -183,7 +154,7 @@ int32_t main(void) {
   double int_2 = 2.0;
   double* p = &int_2;
   uint8_t byte = 255;
-  return *p + 1;
+  return (int32_t)(*p + 1.0);
 }
 `,
   )
@@ -245,10 +216,10 @@ test("C compiles C11 keywords and reserved underscore names in every binding pos
 
 test("C literals are spelled with their declared type, and must fit it", () => {
   const program = c.program(function*() {
-    yield* c.let("int32_t", c.less(u32(1), i32(-1)), c.bool)
-    yield* c.let("INT64_C", c.add(c.literal(c.i64, -5n), c.literal(c.u64, 9007199254740991n)), c.i64)
+    yield* c.let("int32_t", c.less(u32(1), u32(2)), c.bool)
+    yield* c.let("INT64_C", c.add(c.literal(c.i64, -5n), c.literal(c.i64, 9007199254740991n)), c.i64)
     yield* c.let("min", i32(-2147483648), c.i32)
-    yield* c.let("small", c.add(c.literal(c.u16, 65535), c.literal(c.i8, -128)), c.i32)
+    yield* c.let("small", c.add(i32(65535), i32(-128)), c.i32)
     yield* c.let("big", f64(1e21), c.f64)
     yield* c.let("tiny", f64(-1.5e-7), c.f64)
     yield* c.let("negativeZero", f64(-0), c.f64)
@@ -260,8 +231,8 @@ test("C literals are spelled with their declared type, and must fit it", () => {
     `#include <stdbool.h>
 #include <stdint.h>
 
-bool int32_t_2 = UINT32_C(1) < -1;
-int64_t INT64_C_2 = -INT64_C(5) + UINT64_C(9007199254740991);
+bool int32_t_2 = UINT32_C(1) < UINT32_C(2);
+int64_t INT64_C_2 = -INT64_C(5) + INT64_C(9007199254740991);
 int32_t min = INT32_MIN;
 int32_t small = 65535 + -128;
 double big = 1e+21;
@@ -278,6 +249,44 @@ bool infinity = -1.0 / 0.0 < 1.0 / 0.0;
   assert.throws(() => c.literal(c.char, "é"), /char cannot hold the literal "é"/)
   assert.throws(() => c.literal(c.char, "ab"), /char cannot hold the literal "ab"/)
   assert.throws(() => c.literal(c.char, ""), /char cannot hold the literal ""/)
+})
+
+test("C narrow integer sums retain their type and wrap before comparison", () => {
+  const program = c.program(function*() {
+    yield* c.let("small", c.add(i8(1), i8(2)), c.i8)
+    yield* c.let("shortSum", c.add(c.literal(c.i16, 1), c.literal(c.i16, 2)), c.i16)
+    yield* c.let("unsignedShortSum", c.add(c.literal(c.u16, 65535), c.literal(c.u16, 1)), c.u16)
+    const sum = yield* c.fn("sum", [c.param("a", c.u8), c.param("b", c.u8)], c.u8, function*(a, b) {
+      yield* c.return(c.add(a, b))
+    })
+    yield* c.fn("main", [], c.i32, function*() {
+      const result = yield* c.let("result", c.call(sum, c.literal(c.u8, 200), c.literal(c.u8, 100)), c.u8)
+      yield* c.if(c.less(c.add(c.literal(c.u8, 200), c.literal(c.u8, 100)), c.literal(c.u8, 50)), function*() {
+        yield* c.return(c.cast(c.i32, result))
+      })
+      yield* c.return(i32(1))
+    })
+  })
+  const emitted = emitC(program)
+  assert.match(emitted, /int8_t small = \(int8_t\)\(1 \+ 2\);/)
+  assert.match(emitted, /int16_t shortSum = \(int16_t\)\(1 \+ 2\);/)
+  assert.match(emitted, /uint16_t unsignedShortSum = \(uint16_t\)\(65535 \+ 1\);/)
+  assert.match(emitted, /return \(uint8_t\)\(a \+ b\);/)
+  assert.match(emitted, /if \(\(uint8_t\)\(200 \+ 100\) < 50\)/)
+  const directory = mkdtempSync(join(tmpdir(), "ts-emit-c-narrow-"))
+  try {
+    const source = join(directory, "program.c")
+    const executable = join(directory, "program")
+    writeFileSync(source, emitted)
+    const compiled = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", executable], { encoding: "utf8" })
+    assert.ifError(compiled.error)
+    assert.equal(compiled.status, 0, compiled.stderr)
+    const executed = spawnSync(executable, [], { encoding: "utf8" })
+    assert.ifError(executed.error)
+    assert.equal(executed.status, 44, executed.stderr)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })
 
 test("C 64-bit literals preserve exact bounds", () => {
@@ -421,10 +430,10 @@ test("C rejects invalid program structure", () => {
   )
   assert.throws(() => c.address(i32(1) as never), /only an lvalue has an address/)
   const constants = c.program(function*() {
-    const x = yield* c.let("x", c.add(i32(1), c.ternary(c.less(i8(2), f64(3)), i32(1), i32(0))), c.i32)
+    const x = yield* c.let("x", c.add(i32(1), c.ternary(c.less(i32(2), i32(3)), i32(1), i32(0))), c.i32)
     yield* c.let("p", c.add(i32(1), c.address(x)), c.ptr(c.i32))
   })
-  assert.equal(emitC(constants), "#include <stdbool.h>\n#include <stdint.h>\n\nint32_t x = 1 + (2 < 3.0 ? 1 : 0);\nint32_t* p = 1 + &x;\n")
+  assert.equal(emitC(constants), "#include <stdbool.h>\n#include <stdint.h>\n\nint32_t x = 1 + (2 < 3 ? 1 : 0);\nint32_t* p = 1 + &x;\n")
 })
 
 test("C executes pointer arithmetic, assignment through pointers, loops, and typed calls", () => {
