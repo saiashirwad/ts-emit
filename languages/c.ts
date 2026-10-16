@@ -338,6 +338,7 @@ export const c = {
   bool: boolType,
   void: typeNode<C, Void, { readonly kind: "void-type" }>(voidTypeClass, { kind: "void-type" }),
   allocator: typeNode<C, Allocator, { readonly kind: "allocator-type" }>(allocatorTypeClass, { kind: "allocator-type" }),
+
   array: <T extends Numeric | Char, F extends Facts, const N extends number>(
     element: TypeNode<C, T, F>,
     length: N & (number extends N ? never : unknown),
@@ -346,6 +347,7 @@ export const c = {
     if (!Number.isSafeInteger(length) || length <= 0) throw new Error("array length must be a positive safe integer")
     return typeNode(arrayTypeClass, { kind: "array-type", element, length })
   },
+
   ptr: <T, F extends Facts>(
     to: TypeNode<C, T, F> & (T extends readonly unknown[] ? never : [T] extends [Allocator] ? never : unknown),
   ): TypeNode<C, Ptr<T>, { readonly kind: "pointer-type" } | F> => {
@@ -353,6 +355,7 @@ export const c = {
     if (to.kind === "allocator-type") throw new Error("an allocator can only be passed as an argument")
     return typeNode(pointerTypeClass, { kind: "pointer-type", to })
   },
+
   nullable: <T extends Ptr<unknown>, F extends Facts>(
     to: TypeNode<C, T, F>,
   ): TypeNode<C, T | null, { readonly kind: "nullable-type" } | F> => {
@@ -401,20 +404,26 @@ export const c = {
     }
     return expr(literalClass, { kind: "literal", value }, type)
   },
+
   null: <T extends Ptr<unknown>, F extends Facts>(
     type: TypeNode<C, T | null, F>,
   ): Expr<C, T | null, { readonly kind: "literal" } | F> => expr(literalClass, { kind: "literal", value: null }, type),
+
   true: expr<C, boolean, { readonly kind: "literal" | "bool-type" }>(literalClass, { kind: "literal", value: true }, boolType),
+
   false: expr<C, boolean, { readonly kind: "literal" | "bool-type" }>(literalClass, { kind: "literal", value: false }, boolType),
+
   ternary: <FC extends Facts, A, FA extends Facts, B, FB extends Facts>(
     condition: Expr<C, boolean, FC>,
     then: Expr<C, A, FA>,
     otherwise: Expr<C, B, FB> & Check<Equal<A, B>, "branches have different types", { then: A; otherwise: B }>,
   ): Expr<C, A, { readonly kind: "ternary" } | FC | FA | FB> => expr(ternaryClass, { kind: "ternary", condition, then, otherwise }, then.type),
+
   cast: <D extends Numeric, FT extends Facts, A extends Numeric, FA extends Facts>(
     type: TypeNode<C, D, FT>,
     operand: Expr<C, A, FA>,
   ): Expr<C, D, { readonly kind: "cast" } | FT | FA> => expr(castClass, { kind: "cast", operand }, type),
+
   index: <D extends readonly (Numeric | Char)[], FA extends Facts, FI extends Facts>(
     array: Expr<C, D, FA>,
     at: Expr<C, Int, FI>,
@@ -434,10 +443,12 @@ export const c = {
       type.element,
     ) as Lvalue<C, D[number], { readonly kind: "index" } | FA | FI>
   },
+
   address: <D, F extends Facts>(operand: Lvalue<C, D, F>): Expr<C, Ptr<D>, { readonly kind: "address" } | F> => {
     if (!isLvalue(operand)) throw new Error("only an lvalue has an address")
     return expr(unaryClass, { kind: "address", operand }, typeNode(pointerTypeClass, { kind: "pointer-type", to: operand.type }))
   },
+
   deref: <D, F extends Facts>(
     operand: Expr<C, Ptr<D>, F> & ([D] extends [Void] ? never : unknown),
   ): Lvalue<C, D, { readonly kind: "deref" } | F> => {
@@ -450,6 +461,7 @@ export const c = {
       { readonly kind: "deref" } | F
     >
   },
+
   bind: <D, F extends Facts>(
     nameHint: string,
     value: Expr<C, D, F> & ([D] extends [Ptr<unknown> | null] ? (null extends D ? unknown : never) : never),
@@ -459,10 +471,13 @@ export const c = {
     const type = fieldsOf<NullableTypeNode>(value.type).to
     return stmt(bindClass, { kind: "bind", value, binding: declared, type, body: undefined }, ref<C, NonNullable<D>>(declared, type))
   },
+
   maybe: <Y extends Stmt<C, any, any>>(body: Body<C, Y>): Stmt<C, { readonly kind: "maybe" } | FactsOf<Y>> =>
     stmt(maybeClass, { kind: "maybe", body: nested(drain(body).block.statements, []) }),
+
   defer: <Y extends Stmt<C, any, any>>(body: Body<C, Y>): Stmt<C, { readonly kind: "defer" } | FactsOf<Y>> =>
     stmt(deferClass, { kind: "defer", body: drain(body).block, result: binding("result") }),
+
   arena: <Y extends Stmt<C, any, any>>(
     nameHint: string,
     size: number,
@@ -476,6 +491,7 @@ export const c = {
     const release = stmt(deferClass, { kind: "defer", body: free, result: binding("result") })
     return stmt(arenaClass, { kind: "arena", binding: declared, backing, size, body: scope(block.binds, [release, ...block.statements]) })
   },
+
   new: <D, FA extends Facts, FV extends Facts>(
     allocator: Expr<C, Allocator, FA>,
     value: Expr<C, D, FV> & ([D] extends [readonly unknown[] | Void | Allocator | Signature<any, any>] ? never : unknown),
