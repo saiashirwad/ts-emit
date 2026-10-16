@@ -30,7 +30,6 @@ import {
   type Program,
   type Ref,
   ref,
-  type RuntimeType,
   scope,
   type Signature,
   type Stmt,
@@ -60,6 +59,8 @@ export type U16 = number & { readonly [CType]: "u16" }
 export type U32 = number & { readonly [CType]: "u32" }
 export type U64 = bigint & { readonly [CType]: "u64" }
 export type F64 = number & { readonly [CType]: "f64" }
+type Int = I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64
+type Numeric = Int | F64
 export type Ptr<T> = { readonly [CType]: "pointer"; readonly to: T }
 export type Tuple<T, N extends number, A extends readonly T[] = readonly []> =
     number extends N ? never
@@ -74,26 +75,22 @@ export type Tuple<T, N extends number, A extends readonly T[] = readonly []> =
 export type Void = { readonly [CType]: "void" }
 export type Allocator = { readonly [CType]: "allocator" }
 
-export interface CAssign extends TypeLambda {
+interface CAssign extends TypeLambda {
   readonly type: this["Args"] extends readonly [infer A, infer B]
     ? Equal<A, B> extends true ? true : [B] extends [Ptr<unknown> | null] ? Equal<A | null, B> : false
     : false
 }
 
-export interface CTruthy extends TypeLambda {
+interface CTruthy extends TypeLambda {
   readonly type: this["Args"] extends readonly [infer T] ? ([T] extends [boolean] ? true : false) : false
 }
 
-export interface CSum extends TypeLambda {
-  readonly type: this["Args"] extends readonly [infer A, infer B]
-    ? [A] extends [I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64] ? Equal<A, B> extends true ? A : never : never
-    : never
+interface CSum extends TypeLambda {
+  readonly type: this["Args"] extends readonly [infer A, infer B] ? [A] extends [Numeric] ? Equal<A, B> extends true ? A : never : never : never
 }
 
-export interface CCompare extends TypeLambda {
-  readonly type: this["Args"] extends readonly [infer A, infer B]
-    ? [A] extends [I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64] ? Equal<A, B> extends true ? boolean : never : never
-    : never
+interface CCompare extends TypeLambda {
+  readonly type: this["Args"] extends readonly [infer A, infer B] ? [A] extends [Numeric] ? Equal<A, B> extends true ? boolean : never : never : never
 }
 
 export interface C {
@@ -104,78 +101,78 @@ export interface C {
   readonly Compare: CCompare
 }
 
-export interface IntTypeNode {
+interface IntTypeNode {
   readonly kind: "int-type"
   readonly bits: Bits
   readonly signed: boolean
 }
-export interface PointerTypeNode {
+interface PointerTypeNode {
   readonly kind: "pointer-type"
   readonly to: TypeNode<C, unknown>
 }
-export interface NullableTypeNode {
+interface NullableTypeNode {
   readonly kind: "nullable-type"
   readonly to: TypeNode<C, unknown>
 }
-export interface ArrayTypeNode {
+interface ArrayTypeNode {
   readonly kind: "array-type"
   readonly element: TypeNode<C, unknown>
   readonly length: number
 }
-export interface LiteralNode {
+interface LiteralNode {
   readonly kind: "literal"
   readonly value: number | bigint | boolean | string | null | ReadonlyArray<Expr<C, unknown>>
   readonly type: TypeNode<C, unknown>
 }
-export interface UnaryNode {
+interface UnaryNode {
   readonly kind: "address" | "deref"
   readonly operand: Expr<C, unknown>
   readonly lvalue?: true
 }
-export interface IndexNode {
+interface IndexNode {
   readonly kind: "index"
   readonly array: Expr<C, unknown>
   readonly at: Expr<C, unknown>
   readonly lvalue: true
 }
-export interface CastNode {
+interface CastNode {
   readonly kind: "cast"
   readonly operand: Expr<C, unknown>
   readonly type: TypeNode<C, unknown>
 }
-export interface BindNode {
+interface BindNode {
   readonly kind: "bind"
   readonly value: Expr<C, unknown>
   readonly binding: Binding
   readonly type: TypeNode<C, unknown>
   readonly body: Block | undefined
 }
-export interface MaybeNode {
+interface MaybeNode {
   readonly kind: "maybe"
   readonly body: Block
 }
-export interface ArenaNode {
+interface ArenaNode {
   readonly kind: "arena"
   readonly binding: Binding
   readonly backing: Binding
   readonly size: number
   readonly body: Block
 }
-export interface ArenaFreeNode {
+interface ArenaFreeNode {
   readonly kind: "arena-free"
   readonly allocator: Binding
 }
-export interface NewNode {
+interface NewNode {
   readonly kind: "new"
   readonly allocator: Expr<C, Allocator>
   readonly value: Expr<C, unknown>
 }
-export interface DeferNode {
+interface DeferNode {
   readonly kind: "defer"
   readonly body: Block
   readonly result: Binding
 }
-export interface TernaryNode {
+interface TernaryNode {
   readonly kind: "ternary"
   readonly condition: Expr<C, boolean>
   readonly then: Expr<C, unknown>
@@ -206,19 +203,14 @@ const arenaFreeClass = stmtClass<ArenaFreeNode>({ references: (node) => [node.al
 const newClass = exprClass<NewNode>({ children: (node) => [node.allocator, node.value] })
 const ternaryClass = exprClass<TernaryNode>({ children: (node) => [node.condition, node.then, node.otherwise] })
 
-type IntFacts = { readonly kind: "int-type" }
-
 const intName = (node: IntTypeNode): string => `${node.signed ? "" : "u"}int${node.bits}_t`
 
 const fieldsOf = <N>(node: AnyNode): N => node as unknown as N
 
-const isArithmeticConstant = (node: AnyNode): boolean =>
-  node.kind === "literal"
-  || (node.kind === "cast" && isArithmeticConstant(fieldsOf<CastNode>(node).operand))
-  || ((node.kind === "add" || node.kind === "less") && isArithmeticConstant(fieldsOf<BinaryNode>(node).left)
-    && isArithmeticConstant(fieldsOf<BinaryNode>(node).right))
-  || (node.kind === "ternary" && [fieldsOf<TernaryNode>(node).condition, fieldsOf<TernaryNode>(node).then, fieldsOf<TernaryNode>(node).otherwise]
-    .every(isArithmeticConstant))
+const intType = <D>(bits: Bits, signed: boolean): TypeNode<C, D, { readonly kind: "int-type" }> =>
+  typeNode(intTypeClass, { kind: "int-type", bits, signed })
+
+const boolType = typeNode<C, boolean, { readonly kind: "bool-type" }>(boolTypeClass, { kind: "bool-type" })
 
 const nested = (statements: ReadonlyArray<AnyNode>, binds: ReadonlyArray<Binding>): Block => {
   const at = statements.findIndex((statement) => statement.kind === "bind")
@@ -234,6 +226,16 @@ const nested = (statements: ReadonlyArray<AnyNode>, binds: ReadonlyArray<Binding
   })
   return scope(binds, [...statements.slice(0, at), inner])
 }
+
+const isArithmeticConstant = (node: AnyNode): boolean =>
+  node.kind === "literal"
+  || (node.kind === "cast" && isArithmeticConstant(fieldsOf<CastNode>(node).operand))
+  || ((node.kind === "add" || node.kind === "less") && isArithmeticConstant(fieldsOf<BinaryNode>(node).left)
+    && isArithmeticConstant(fieldsOf<BinaryNode>(node).right))
+  || (node.kind === "ternary" && [fieldsOf<TernaryNode>(node).condition, fieldsOf<TernaryNode>(node).then, fieldsOf<TernaryNode>(node).otherwise]
+    .every(isArithmeticConstant))
+
+const isAddressConstant = (node: AnyNode): boolean => node.kind === "address" && fieldsOf<UnaryNode>(node).operand.kind === "ref"
 
 interface Source {
   readonly binding: Binding
@@ -317,28 +319,26 @@ const checkEscapes = (fn: FunctionNode): void => {
   )
 }
 
-const isAddressConstant = (node: AnyNode): boolean => node.kind === "address" && fieldsOf<UnaryNode>(node).operand.kind === "ref"
-
 export const c = {
   ...structured<C>(),
   ...functionConstruct<C>(),
   ...addConstruct<C>((left) => left),
-  ...lessConstruct<C>((): RuntimeType => c.bool),
+  ...lessConstruct<C>(() => boolType),
 
-  i8: typeNode<C, I8, IntFacts>(intTypeClass, { kind: "int-type", bits: 8, signed: true }),
-  i16: typeNode<C, I16, IntFacts>(intTypeClass, { kind: "int-type", bits: 16, signed: true }),
-  i32: typeNode<C, I32, IntFacts>(intTypeClass, { kind: "int-type", bits: 32, signed: true }),
-  i64: typeNode<C, I64, IntFacts>(intTypeClass, { kind: "int-type", bits: 64, signed: true }),
-  u8: typeNode<C, U8, IntFacts>(intTypeClass, { kind: "int-type", bits: 8, signed: false }),
-  u16: typeNode<C, U16, IntFacts>(intTypeClass, { kind: "int-type", bits: 16, signed: false }),
-  u32: typeNode<C, U32, IntFacts>(intTypeClass, { kind: "int-type", bits: 32, signed: false }),
-  u64: typeNode<C, U64, IntFacts>(intTypeClass, { kind: "int-type", bits: 64, signed: false }),
+  i8: intType<I8>(8, true),
+  i16: intType<I16>(16, true),
+  i32: intType<I32>(32, true),
+  i64: intType<I64>(64, true),
+  u8: intType<U8>(8, false),
+  u16: intType<U16>(16, false),
+  u32: intType<U32>(32, false),
+  u64: intType<U64>(64, false),
   f64: typeNode<C, F64, { readonly kind: "double-type" }>(doubleTypeClass, { kind: "double-type" }),
   char: typeNode<C, Char, { readonly kind: "char-type" }>(charTypeClass, { kind: "char-type" }),
-  bool: typeNode<C, boolean, { readonly kind: "bool-type" }>(boolTypeClass, { kind: "bool-type" }),
+  bool: boolType,
   void: typeNode<C, Void, { readonly kind: "void-type" }>(voidTypeClass, { kind: "void-type" }),
   allocator: typeNode<C, Allocator, { readonly kind: "allocator-type" }>(allocatorTypeClass, { kind: "allocator-type" }),
-  array: <T extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char, F extends Facts, const N extends number>(
+  array: <T extends Numeric | Char, F extends Facts, const N extends number>(
     element: TypeNode<C, T, F>,
     length: N & (number extends N ? never : unknown),
   ): TypeNode<C, Tuple<T, N>, { readonly kind: "array-type" } | F> => {
@@ -361,7 +361,7 @@ export const c = {
   },
 
   literal: <
-    D extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char | readonly (I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char)[],
+    D extends Numeric | Char | readonly (Numeric | Char)[],
     F extends Facts,
   >(
     type: TypeNode<C, D, F>,
@@ -404,37 +404,20 @@ export const c = {
   null: <T extends Ptr<unknown>, F extends Facts>(
     type: TypeNode<C, T | null, F>,
   ): Expr<C, T | null, { readonly kind: "literal" } | F> => expr(literalClass, { kind: "literal", value: null }, type),
-  true: expr<C, boolean, { readonly kind: "literal" | "bool-type" }>(
-    literalClass,
-    { kind: "literal", value: true },
-    typeNode(boolTypeClass, { kind: "bool-type" }),
-  ),
-  false: expr<C, boolean, { readonly kind: "literal" | "bool-type" }>(
-    literalClass,
-    { kind: "literal", value: false },
-    typeNode(boolTypeClass, { kind: "bool-type" }),
-  ),
+  true: expr<C, boolean, { readonly kind: "literal" | "bool-type" }>(literalClass, { kind: "literal", value: true }, boolType),
+  false: expr<C, boolean, { readonly kind: "literal" | "bool-type" }>(literalClass, { kind: "literal", value: false }, boolType),
   ternary: <FC extends Facts, A, FA extends Facts, B, FB extends Facts>(
     condition: Expr<C, boolean, FC>,
     then: Expr<C, A, FA>,
     otherwise: Expr<C, B, FB> & Check<Equal<A, B>, "branches have different types", { then: A; otherwise: B }>,
   ): Expr<C, A, { readonly kind: "ternary" } | FC | FA | FB> => expr(ternaryClass, { kind: "ternary", condition, then, otherwise }, then.type),
-  cast: <
-    D extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64,
-    FT extends Facts,
-    A extends I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64,
-    FA extends Facts,
-  >(
+  cast: <D extends Numeric, FT extends Facts, A extends Numeric, FA extends Facts>(
     type: TypeNode<C, D, FT>,
     operand: Expr<C, A, FA>,
   ): Expr<C, D, { readonly kind: "cast" } | FT | FA> => expr(castClass, { kind: "cast", operand }, type),
-  index: <
-    D extends readonly (I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F64 | Char)[],
-    FA extends Facts,
-    FI extends Facts,
-  >(
+  index: <D extends readonly (Numeric | Char)[], FA extends Facts, FI extends Facts>(
     array: Expr<C, D, FA>,
-    at: Expr<C, I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64, FI>,
+    at: Expr<C, Int, FI>,
   ): Lvalue<C, D[number], { readonly kind: "index" } | FA | FI> => {
     if (array.type.kind !== "array-type") throw new Error("index needs an array type")
     if (at.type.kind !== "int-type") throw new Error("index needs an integer type")
@@ -606,7 +589,7 @@ const body = (block: Block, emit: Parameters<Handler>[1]): string[] => {
   return [...lines, ...deferredIn(block.statements).flatMap((deferred) => emit.block(deferred.body))]
 }
 
-const declaration = (type: TypeNode<C, unknown>, name: string, emit: Parameters<Handler>[1]): string => {
+const declaration = (type: AnyNode, name: string, emit: Parameters<Handler>[1]): string => {
   if (type.kind === "array-type") {
     const node = fieldsOf<ArrayTypeNode>(type)
     return `${emit.node(node.element).text} ${name}[${node.length}]`
@@ -640,7 +623,7 @@ export const cTarget = defineTarget(
       if (typeof value === "string") return frag(POSTFIX, `'${charSpelling(value)}'`)
       if (typeof value !== "number" && typeof value !== "bigint") throw new Error("numeric literal needs a number")
       if (node.type.kind === "int-type") {
-        const type = node.type as unknown as IntTypeNode
+        const type = fieldsOf<IntTypeNode>(node.type)
         if (typeof value === "bigint") {
           if (value === -(1n << 63n)) return frag(POSTFIX, "INT64_MIN")
           const magnitude = `${type.signed ? "" : "U"}INT64_C(${value < 0n ? -value : value})`
@@ -661,10 +644,10 @@ export const cTarget = defineTarget(
       return value < 0 || Object.is(value, -0) ? frag(UNARY, `-${magnitude}`) : frag(POSTFIX, magnitude)
     },
     ref: (node: RefNode, emit) => emit.name(node.binding),
-    index: (node: IndexNode, emit) => ({ prec: POSTFIX, text: `${emit.at(node.array, POSTFIX)}[${emit.node(node.at).text}]` }),
-    cast: (node: CastNode, emit) => ({ prec: UNARY, text: `(${emit.node(node.type).text})${emit.at(node.operand, UNARY)}` }),
-    address: (node: UnaryNode, emit) => ({ prec: UNARY, text: `&${emit.at(node.operand, UNARY)}` }),
-    deref: (node: UnaryNode, emit) => ({ prec: UNARY, text: `*${emit.at(node.operand, UNARY)}` }),
+    index: (node: IndexNode, emit) => frag(POSTFIX, `${emit.at(node.array, POSTFIX)}[${emit.node(node.at).text}]`),
+    cast: (node: CastNode, emit) => frag(UNARY, `(${emit.node(node.type).text})${emit.at(node.operand, UNARY)}`),
+    address: (node: UnaryNode, emit) => frag(UNARY, `&${emit.at(node.operand, UNARY)}`),
+    deref: (node: UnaryNode, emit) => frag(UNARY, `*${emit.at(node.operand, UNARY)}`),
     add: (node: BinaryNode, emit) => {
       const left = fieldsOf<Expr<C, unknown>>(node.left).type
       const right = fieldsOf<Expr<C, unknown>>(node.right).type
@@ -675,16 +658,11 @@ export const cTarget = defineTarget(
       }
       return frag(ADD, text)
     },
-    less: (node: BinaryNode, emit) => ({ prec: RELATIONAL, text: `${emit.at(node.left, RELATIONAL)} < ${emit.at(node.right, RELATIONAL + 1)}` }),
-    ternary: (node: TernaryNode, emit) => ({
-      prec: CONDITIONAL,
-      text: `${emit.at(node.condition, CONDITIONAL + 1)} ? ${emit.node(node.then).text} : ${emit.at(node.otherwise, CONDITIONAL)}`,
-    }),
-    call: (node: CallNode, emit) => ({
-      prec: POSTFIX,
-      text: `${emit.at(node.callee, POSTFIX)}(${node.args.map((arg) => emit.node(arg).text).join(", ")})`,
-    }),
-    let: (node: LetNode, emit) => `${declaration(node.type as TypeNode<C, unknown>, emit.name(node.binding), emit)} = ${emit.node(node.init).text};`,
+    less: (node: BinaryNode, emit) => frag(RELATIONAL, `${emit.at(node.left, RELATIONAL)} < ${emit.at(node.right, RELATIONAL + 1)}`),
+    ternary: (node: TernaryNode, emit) =>
+      frag(CONDITIONAL, `${emit.at(node.condition, CONDITIONAL + 1)} ? ${emit.node(node.then).text} : ${emit.at(node.otherwise, CONDITIONAL)}`),
+    call: (node: CallNode, emit) => frag(POSTFIX, `${emit.at(node.callee, POSTFIX)}(${node.args.map((arg) => emit.node(arg).text).join(", ")})`),
+    let: (node: LetNode, emit) => `${declaration(node.type, emit.name(node.binding), emit)} = ${emit.node(node.init).text};`,
     assign: (node: AssignNode, emit) => `${emit.node(node.target).text} = ${emit.node(node.value).text};`,
     expression: (node: ExpressionNode, emit) => `${emit.node(node.expr).text};`,
     if: (node: IfNode, emit) => {
@@ -707,10 +685,10 @@ export const cTarget = defineTarget(
     "arena-free": (node: ArenaFreeNode, emit) => `arena_free(${emit.name(node.allocator)});`,
     new: (node: NewNode, emit) => {
       const type = emit.node(node.value.type as TypeNode<C, unknown>).text
-      return {
-        prec: POSTFIX,
-        text: `arena_new(${emit.node(node.allocator).text}, sizeof(${type}), _Alignof(${type}), &(${type}){${emit.node(node.value).text}})`,
-      }
+      return frag(
+        POSTFIX,
+        `arena_new(${emit.node(node.allocator).text}, sizeof(${type}), _Alignof(${type}), &(${type}){${emit.node(node.value).text}})`,
+      )
     },
     return: (node: ReturnNode, emit) => {
       const value = emit.node(node.value).text
@@ -722,7 +700,7 @@ export const cTarget = defineTarget(
       return [`${type} ${result} = ${value};`, ...live.flatMap((deferred) => emit.block(deferred.body)), `return ${result};`].join("\n")
     },
     function: (node: FunctionNode, emit) => {
-      const params = node.params.map((param) => declaration(param.type as TypeNode<C, unknown>, emit.name(param.binding), emit))
+      const params = node.params.map((param) => declaration(param.type, emit.name(param.binding), emit))
       return `${emit.node(node.returns).text} ${emit.name(node.binding)}(${params.length === 0 ? "void" : params.join(", ")}) ${
         braces(body(node.body, emit))
       }`
